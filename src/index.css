@@ -1,0 +1,21 @@
+@import "tailwindcss";
+@import "tldraw/tldraw.css";
+@import "./styles/pixel.css";
+
+body {
+  background: #0a0a0d;
+  color: #f4f4f5;
+  /* 阅读优先:正文用系统字体,像素字体只用于装饰性标题/徽章 */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* tldraw HTML shape:强制独立合成层,避免首次落入 transform 父级时黑块不绘字 */
+.tldraw-dark-host .tl-html-container {
+  transform: translateZ(0);
+  isolation: isolate;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}

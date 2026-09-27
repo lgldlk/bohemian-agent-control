@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <!-- Pixel-style shadow -->
+    <filter id="pixelShadow">
+      <feDropShadow dx="2" dy="2" stdDeviation="0" flood-color="#000" flood-opacity="0.8"/>
+    </filter>
+  </defs>
+  
+  <!-- Dark background circle with white border -->
+  <circle cx="50" cy="50" r="48" fill="#0a0a0d" stroke="#fafafa" stroke-width="2"/>
+  
+  <!-- Inner decorative circle -->
+  <circle cx="50" cy="50" r="42" fill="none" stroke="#3f3f46" stroke-width="1" opacity="0.5"/>
+  
+  <!-- Decorative elements - bohemian patterns -->
+  <path d="M 30 22 Q 35 17, 40 22" stroke="#d4d4d8" stroke-width="1.5" fill="none" opacity="0.6"/>
+  <path d="M 60 22 Q 65 17, 70 22" stroke="#d4d4d8" stroke-width="1.5" fill="none" opacity="0.6"/>
+  
+  <!-- Letter B with artistic flair -->
+  <text x="50" y="68" font-family="Georgia, serif" font-size="48" font-weight="bold" 
+        fill="#fafafa" text-anchor="middle" style="font-style: italic;">B</text>
+  
+  <!-- Small decorative dots -->
+  <circle cx="28" cy="75" r="2" fill="#d4d4d8" opacity="0.7"/>
+  <circle cx="72" cy="75" r="2" fill="#d4d4d8" opacity="0.7"/>
+  <circle cx="50" cy="85" r="1.5" fill="#a1a1aa" opacity="0.6"/>
+  
+  <!-- Feather accent - bohemian symbol -->
+  <path d="M 50 30 Q 52 27, 54 30 L 53 36 L 51 36 Z" 
+        fill="#fafafa" opacity="0.8" stroke="#fafafa" stroke-width="0.5"/>
+  <line x1="52" y1="30" x2="52" y2="24" stroke="#d4d4d8" stroke-width="1" opacity="0.7"/>
+  
+  <!-- Subtle corner accents -->
+  <line x1="20" y1="80" x2="25" y2="80" stroke="#52525b" stroke-width="1" opacity="0.4"/>
+  <line x1="75" y1="80" x2="80" y2="80" stroke="#52525b" stroke-width="1" opacity="0.4"/>
+</svg>

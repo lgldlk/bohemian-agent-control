@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "allowImportingTsExtensions": false,
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "noEmit": false,
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../terminal-protocol" }
+  ]
+}

@@ -1,0 +1,707 @@
+/* ============ PixelAct UI 风格核心 · 纯黑白版 · 阅读优化 ============ */
+/* 字体(Press Start 2P + VT323)由 index.html 的 <link> 加载。
+   原则:像素风只用于小控件(按钮/徽章/装饰标题),
+   大面积内容卡片用柔和圆角 + 细边框,保证阅读舒适。 */
+:root {
+  --box-shadow-width: 4px;
+  --pixel-box-shadow:
+    calc(-1 * var(--box-shadow-width)) 0 0 0 #000,
+    var(--box-shadow-width) 0 0 0 #000,
+    0 var(--box-shadow-width) 0 0 #000,
+    0 calc(-1 * var(--box-shadow-width)) 0 0 #000;
+  --pixel-box-shadow-sm:
+    -2px 0 0 0 #000,
+    2px 0 0 0 #000,
+    0 2px 0 0 #000,
+    0 -2px 0 0 #000;
+  --px-live: #fafafa;
+  --px-idle: #52525b;
+}
+
+.pixel-font {
+  font-family: "Press Start 2P", ui-monospace, monospace;
+  line-height: 1.6;
+  letter-spacing: 0.5px;
+}
+
+.terminal-font {
+  font-family: "VT323", ui-monospace, monospace;
+}
+
+.box-shadow-margin {
+  margin: var(--box-shadow-width);
+}
+
+/* Tailwind preflight 会把 button 的 cursor 重置,所有可点击元素统一手型 */
+button:not(:disabled),
+a[href],
+[role="button"] {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* ---- 内容卡片:柔和圆角 + 细边框,阅读优先 ----
+   像素硬阴影只保留给按钮/徽章等小控件,大面积卡片不再用 */
+.px-card {
+  border-radius: 10px;
+  box-shadow: none;
+  background: #131318;
+  border: 1px solid #232329;
+}
+
+.px-card-hover {
+  transition: transform 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+.px-card-hover:hover {
+  transform: translateY(-2px);
+  border-color: #3f3f46;
+  background: #17171d;
+}
+
+/* ---- 像素按钮:黑白两档 + 反白主按钮 ---- */
+.px-btn {
+  position: relative;
+  border-radius: 0;
+  box-shadow: var(--pixel-box-shadow);
+  font-family: "Press Start 2P", ui-monospace, monospace;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 80ms steps(2), background-color 120ms, filter 120ms;
+}
+.px-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-right: 4px solid rgba(0, 0, 0, 0.35);
+  border-bottom: 4px solid rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.px-btn:hover {
+  filter: brightness(1.15);
+}
+.px-btn:active {
+  transform: translateY(3px);
+}
+.px-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* default/primary:白底黑字(主操作); dark:深灰底(次要操作) */
+.px-btn-default { background: #f4f4f5; color: #09090b; }
+.px-btn-primary { background: #fafafa; color: #09090b; }
+.px-btn-dark { background: #1c1c22; color: #d4d4d8; border: 1px solid #2e2e36; }
+.px-btn-dark::after {
+  border-right-color: rgba(0, 0, 0, 0.6);
+  border-bottom-color: rgba(0, 0, 0, 0.6);
+}
+/* 旧语义 variant 全部映射到黑白,保持 API 兼容 */
+.px-btn-success { background: #fafafa; color: #09090b; }
+.px-btn-danger { background: #09090b; color: #fafafa; outline: 2px solid #fafafa; outline-offset: -2px; }
+.px-btn-warn { background: #d4d4d8; color: #09090b; }
+
+/* ---- 像素徽章:黑白两档 ---- */
+.px-badge {
+  border-radius: 0;
+  box-shadow: var(--pixel-box-shadow-sm);
+  font-family: "Press Start 2P", ui-monospace, monospace;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+/* ---- 像素输入框 ---- */
+.px-input {
+  border-radius: 0;
+  box-shadow: var(--pixel-box-shadow);
+  background: #08080b;
+  color: #e4e4e7;
+  outline: none;
+}
+.px-input:focus {
+  box-shadow:
+    -4px 0 0 0 #000, 4px 0 0 0 #000, 0 4px 0 0 #000, 0 -4px 0 0 #000,
+    0 0 0 2px #fafafa;
+}
+.px-input::placeholder {
+  color: #52525b;
+}
+
+/* ---- 像素下拉 ---- */
+.px-select {
+  border-radius: 0;
+  box-shadow: var(--pixel-box-shadow);
+  background: #101014;
+  color: #e4e4e7;
+  outline: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M0 0h4v4H0zM4 4h4v4H4zM8 0h4v4H8z' fill='%23a1a1aa'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+/* ---- 背景:纯色,阅读优先(网格/扫描线已移除) ---- */
+.px-bg-grid {
+  background-color: #0a0a0d;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 8px 8px;
+  background-position: center top;
+}
+
+/* tldraw 画布底:纯黑,网格由 PixelGrid 组件随相机平移 */
+.tldraw-dark-host .tl-background {
+  background-color: #0a0a0d !important;
+}
+
+.tl-group-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #0a0a0d;
+  box-shadow:
+    -3px 0 0 0 #000,
+    3px 0 0 0 #000,
+    0 -3px 0 0 #000,
+    0 3px 0 0 #000;
+}
+.tl-group-bar__hint {
+  font-size: 12px;
+  color: #71717a;
+  white-space: nowrap;
+}
+
+/* ---- 扫描线:默认关闭,太干扰阅读 ---- */
+.px-scanlines::before {
+  display: none;
+}
+
+/* ---- 像素进度条 ---- */
+.px-progress {
+  border-radius: 0;
+  box-shadow: var(--pixel-box-shadow-sm);
+  background: #000;
+  overflow: hidden;
+}
+.px-progress > div {
+  height: 100%;
+  background-image: repeating-linear-gradient(
+    90deg,
+    currentColor 0px,
+    currentColor 6px,
+    transparent 6px,
+    transparent 8px
+  );
+}
+
+/* ---- 更新闪光:变化的卡片边框柔和高亮 ---- */
+@keyframes px-flash {
+  0%, 100% { border-color: #232329; }
+  50% { border-color: #fafafa; }
+}
+
+/* ---- 像素闪烁光标 ---- */
+@keyframes px-attention {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+@keyframes px-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.px-blink {
+  animation: px-blink 1.1s steps(1) infinite;
+}
+
+/* ---- 白板 task-card:PixelAct 硬边 + 阅读向正文 ---- */
+.tl-task-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 10px 8px;
+  overflow: visible;
+  border-radius: 14px;
+  background: #16161c;
+  color: #f4f4f5;
+  border: 1px solid #2a2a32;
+  box-shadow: none;
+}
+@keyframes tl-run-border {
+  0%, 49% { border-bottom-color: #fafafa; }
+  50%, 100% { border-bottom-color: #2a2a32; }
+}
+.tl-task-card.is-run {
+  animation: tl-run-border 1.1s steps(1) infinite;
+}
+.tl-task-card.is-pick {
+  cursor: pointer;
+  text-align: left;
+}
+.tl-task-card.is-pick:hover:not(:disabled) {
+  border-color: #52525b;
+  background: #1c1c22;
+}
+.tl-task-card.is-pick:disabled,
+.tl-task-card.is-added {
+  cursor: default;
+  opacity: 0.55;
+}
+.is-run::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: #fafafa;
+  animation: px-blink 1.1s steps(1) infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+.tl-task-card.is-run::after {
+  content: none;
+}
+.bloub-status-icon.is-pixel {
+  overflow: hidden;
+}
+.bloub-status-icon.is-pixel svg {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+.tl-task-card__bot {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tl-task-card__agent {
+  position: absolute;
+  right: -2px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: #16161c;
+  border: 1px solid #3f3f46;
+  pointer-events: none;
+}
+.tl-task-card__agent .agent-mark__icon {
+  width: 11px;
+  height: 11px;
+}
+.tl-task-card__body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 2px 2px 0;
+}
+.tl-task-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.tl-task-card__badge {
+  flex-shrink: 0;
+  box-shadow: var(--pixel-box-shadow-sm);
+  font-family: "Press Start 2P", ui-monospace, monospace;
+  font-size: 7px;
+  line-height: 1;
+  letter-spacing: 0.5px;
+  padding: 5px 6px 4px;
+  white-space: nowrap;
+}
+.tl-task-card__badge.is-run {
+  background: #fafafa;
+  color: #09090b;
+}
+.tl-task-card__badge.is-idle {
+  background: #1c1c22;
+  color: #a1a1aa;
+}
+.tl-task-card__lamp {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 92px;
+  overflow: hidden;
+  color: #71717a;
+  font-size: 11px;
+  line-height: 1;
+}
+.tl-task-card__lamp i {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 99px;
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 28%, transparent);
+}
+.tl-task-card__lamp.is-working { color: #4ade80; }
+.tl-task-card__lamp.is-running { color: #d4d4d8; }
+.tl-task-card__lamp.is-blocked { color: #fbbf24; }
+.tl-task-card__lamp.is-starting { color: #e4e4e7; }
+.tl-task-card__lamp.is-idle { color: #a1a1aa; }
+.tl-task-card__lamp.is-completed { color: #737373; }
+.tl-task-card__lamp.is-stopped,
+.tl-task-card__lamp.is-missing,
+.tl-task-card__lamp.is-deleted { color: #71717a; }
+.tl-task-card__lamp.is-error { color: #f87171; }
+.tl-task-card__lamp.is-working i,
+.tl-task-card__lamp.is-running i {
+  animation: task-lamp-pulse 1.2s ease-in-out infinite;
+}
+@keyframes task-lamp-pulse {
+  50% { opacity: 0.35; }
+}
+.tl-task-card__project {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+.tl-task-card__deleted-mark {
+  flex-shrink: 0;
+  color: #71717a;
+  font-size: 10px;
+}
+.tl-task-card__attention {
+  flex: 0 0 auto;
+  color: #fbbf24;
+  animation: px-attention 1.2s steps(2) infinite;
+}
+.tl-task-card__preview {
+  position: relative;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #71717a;
+  box-shadow: none;
+  pointer-events: all;
+  cursor: pointer;
+  opacity: 0.5;
+}
+.tl-task-card__preview:hover {
+  opacity: 1;
+  color: #fafafa;
+  background: #232329;
+}
+.tl-task-card__preview:active {
+  transform: translateY(1px);
+}
+.tl-task-card__title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  min-height: 2.9em;
+  max-height: 2.9em;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: #f4f4f5;
+}
+.tl-task-card__meta {
+  flex-shrink: 0;
+  height: 20px;
+  line-height: 20px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  font-size: 12px;
+  color: #71717a;
+  white-space: nowrap;
+}
+.tl-task-card__meta-rest {
+  flex-shrink: 0;
+}
+.model-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  color: inherit;
+}
+.model-mark__icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  fill: currentColor;
+  color: #e4e4e7;
+}
+.model-mark__short {
+  flex-shrink: 0;
+  color: #d4d4d8;
+}
+.model-mark__raw {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #71717a;
+}
+.agent-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: inherit;
+}
+.agent-mark__icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  fill: currentColor;
+  color: inherit;
+}
+.agent-mark--lg .agent-mark__icon {
+  width: 22px;
+  height: 22px;
+}
+.agent-mark__label {
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+/* ---- 像素加载:硬边砖块依次点亮 ---- */
+@keyframes px-brick {
+  0%, 18% { background: #fafafa; }
+  19%, 100% { background: #1c1c22; }
+}
+.tl-board-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  background: #0a0a0d;
+}
+.tl-board-loading__bricks {
+  display: flex;
+  gap: 10px;
+}
+.add-folder-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+.add-folder-dots span {
+  width: 6px;
+  height: 6px;
+  background: #1c1c22;
+  box-shadow: var(--pixel-box-shadow-sm);
+  animation: px-brick 0.9s steps(1) infinite;
+}
+.add-folder-dots span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+.add-folder-dots span:nth-child(3) {
+  animation-delay: 0.24s;
+}
+.tl-board-loading__brick {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border-radius: 0;
+  background: #1c1c22;
+  box-shadow: var(--pixel-box-shadow);
+  animation: px-brick 0.9s steps(1) infinite;
+}
+.tl-board-loading__brick::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-right: 3px solid rgba(0, 0, 0, 0.45);
+  border-bottom: 3px solid rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.tl-board-loading__label {
+  font-family: "Press Start 2P", ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1.6;
+  letter-spacing: 1px;
+  color: #a1a1aa;
+}
+
+.tl-terminal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: inherit;
+  border: 1px solid #3f3f46;
+  color: inherit;
+}
+.tl-terminal.is-edit {
+  border-color: #a1a1aa;
+}
+.tl-terminal.is-run {
+  animation: tl-run-border 1.1s steps(1) infinite;
+}
+.tl-terminal.is-run::after {
+  content: none;
+}
+.tl-terminal__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 8px;
+  background: #18181b;
+  border-bottom: 1px solid #27272a;
+  flex-shrink: 0;
+  pointer-events: all;
+  cursor: grab;
+}
+.tl-terminal__bar:active {
+  cursor: grabbing;
+}
+.tl-terminal__bar svg {
+  pointer-events: none;
+}
+.tl-terminal__meta {
+  min-width: 0;
+  flex: 1;
+}
+.tl-terminal__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #fafafa;
+}
+.tl-terminal__cwd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: #71717a;
+}
+.tl-terminal__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #71717a;
+  pointer-events: all;
+}
+.tl-terminal__btn:hover {
+  background: #27272a;
+  color: #fafafa;
+}
+.tl-terminal__btn.is-danger:hover {
+  background: #450a0a;
+  color: #fecaca;
+}
+.tl-terminal__body,
+.tl-terminal__surface {
+  pointer-events: all;
+}
+.tl-terminal__body {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  background: inherit;
+}
+.tl-terminal__surface {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+.tl-terminal .xterm-screen {
+  overflow: hidden;
+}
+.tl-terminal__menu {
+  position: absolute;
+  right: 0;
+  top: 28px;
+  z-index: 20;
+  border: 1px solid #3f3f46;
+  background: #09090b;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  pointer-events: all;
+}
+.tl-terminal summary {
+  list-style: none;
+}
+.tl-terminal summary::-webkit-details-marker {
+  display: none;
+}
+.tl-terminal__empty {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #71717a;
+}
+
+/* ---- tldraw UI 变量:挂在 .tl-theme__* 上才会生效 ---- */
+.tldraw-dark-host .tl-theme__dark {
+  --tl-color-selected: #fafafa;
+  --tl-color-selected-contrast: #09090b;
+  --tl-color-primary: #fafafa;
+  --tl-color-focus: #fafafa;
+  --tl-color-selection-stroke: #fafafa;
+  --tl-color-selection-fill: rgba(250, 250, 250, 0.12);
+}
+
+.tldraw-dark-host .tl-theme__light {
+  --tl-color-selected: #09090b;
+  --tl-color-selected-contrast: #fafafa;
+  --tl-color-primary: #09090b;
+  --tl-color-focus: #09090b;
+  --tl-color-selection-stroke: #09090b;
+  --tl-color-selection-fill: rgba(9, 9, 11, 0.08);
+}

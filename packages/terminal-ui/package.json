@@ -1,0 +1,57 @@
+{
+  "name": "@bohemian/terminal-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./terminal": {
+      "types": "./dist/components/Terminal.d.ts",
+      "import": "./dist/components/Terminal.js"
+    },
+    "./appearance": {
+      "types": "./dist/appearance.d.ts",
+      "import": "./dist/appearance.js"
+    },
+    "./appearance-menu": {
+      "types": "./dist/components/TerminalAppearanceMenu.d.ts",
+      "import": "./dist/components/TerminalAppearanceMenu.js"
+    },
+    "./history-panel": {
+      "types": "./dist/components/TerminalHistoryPanel.d.ts",
+      "import": "./dist/components/TerminalHistoryPanel.js"
+    },
+    "./manager": {
+      "types": "./dist/hooks/useTerminalManager.d.ts",
+      "import": "./dist/hooks/useTerminalManager.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bohemian/terminal-client": "workspace:*",
+    "@bohemian/terminal-protocol": "workspace:*",
+    "@xterm/addon-fit": "0.12.0-beta.300",
+    "@xterm/addon-search": "0.17.0-beta.300",
+    "@xterm/addon-unicode11": "0.10.0-beta.300",
+    "@xterm/addon-web-links": "0.13.0-beta.300",
+    "@xterm/addon-webgl": "0.20.0-beta.299",
+    "@xterm/xterm": "6.1.0-beta.303",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.8",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+dev.log
+package-lock.json
+reference/
+analysis/orca/
+.pi-glla/
+.DS_Store
+*.local

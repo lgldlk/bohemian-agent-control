@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseAgentCommand, sessionRefMatches } from '@bohemian/agent-protocol';
-import { applyLiveStatus, classifyAgentCommand, runningSessionIds, type LiveAgentProcess } from './liveProcesses';
+import { classifyAgentCommand } from '@bohemian/agent-protocol';
+import { applyLiveStatus, runningSessionIds, type LiveAgentProcess } from './liveProcesses';
 
 describe('classifyAgentCommand', () => {
   it('maps interactive agent binaries and ignores app-server', () => {

@@ -14,6 +14,10 @@ import {
   isUnknownModel,
   mapPool,
   readCodexSessionModel,
+  readCodexSessionTokenCount,
+  readCodexSessionUsageBreakdown,
+  SessionNumberCache,
+  SessionUsageCache,
 } from '../sessionModel';
 import { createTtlCache } from '../ttlCache';
 
@@ -23,10 +27,12 @@ export class CodexAgentAdapter implements AgentAdapter {
   readonly kind = 'codex' as const;
   private readonly appServer: CodexAppServerClient;
   private readonly models = new SessionModelCache();
+  private readonly tokenCounts = new SessionNumberCache();
+  private readonly usageBreakdowns = new SessionUsageCache();
   private readonly listing = createTtlCache<Record<string, unknown>[]>(LISTING_TTL_MS);
 
-  constructor(command = 'codex') {
-    this.appServer = new CodexAppServerClient(command);
+  constructor(command = 'codex', codexHome?: string) {
+    this.appServer = new CodexAppServerClient(command, codexHome);
   }
 
   private listThreads(): Promise<Record<string, unknown>[]> {
@@ -49,13 +55,17 @@ export class CodexAgentAdapter implements AgentAdapter {
 
   async digest(): Promise<AgentDigestEntry[]> {
     const threads = await this.listThreads();
-    return threads.map((thread) => {
+    return mapPool(threads, SESSION_MODEL_CONCURRENCY, async (thread) => {
       const status = threadStatus(thread);
+      const path = stringValue(thread.path);
       return {
         id: stringValue(thread.id),
         agentKind: this.kind,
         modified: dateFromSeconds(thread.updatedAt),
         messageCount: Array.isArray(thread.turns) ? thread.turns.length : 0,
+        ...(path
+          ? { tokenCount: await this.tokenCounts.get(path, readCodexSessionTokenCount) }
+          : {}),
         workingDir: stringValue(thread.cwd),
         status: status === 'inProgress' || status === 'running' ? 'running' as const : 'completed' as const,
       };
@@ -109,6 +119,12 @@ export class CodexAgentAdapter implements AgentAdapter {
         : listed.id === 'unknown' && listed.provider
           ? listed
           : UNKNOWN_MODEL;
+    const tokenCount = rollout
+      ? await this.tokenCounts.get(rollout, readCodexSessionTokenCount)
+      : undefined;
+    const usageBreakdown = rollout
+      ? await this.usageBreakdowns.get(rollout, readCodexSessionUsageBreakdown)
+      : undefined;
 
     return {
       id,
@@ -124,6 +140,8 @@ export class CodexAgentAdapter implements AgentAdapter {
       lastActivity: modified,
       size: Math.max(30, preview.length),
       messageCount: Array.isArray(thread.turns) ? thread.turns.length : 0,
+      ...(tokenCount !== undefined ? { tokenCount } : {}),
+      ...(usageBreakdown ? { usageBreakdown } : {}),
       toolCalls: 0,
       tools: [],
       openUrl: `codex://thread/${encodeURIComponent(id)}`,

@@ -13,6 +13,10 @@ import {
   indexClaudeSessionFiles,
   mapPool,
   readClaudeSessionModel,
+  readClaudeSessionTokenCount,
+  readClaudeSessionUsageBreakdown,
+  SessionNumberCache,
+  SessionUsageCache,
 } from '../sessionModel';
 import { createTtlCache } from '../ttlCache';
 
@@ -22,6 +26,8 @@ const LISTING_TTL_MS = 10_000;
 export class ClaudeCodeAgentAdapter implements AgentAdapter {
   readonly kind = 'claude-code' as const;
   private readonly models = new SessionModelCache();
+  private readonly tokenCounts = new SessionNumberCache();
+  private readonly usageBreakdowns = new SessionUsageCache();
   private readonly listing = createTtlCache<SDKSessionInfo[]>(LISTING_TTL_MS);
 
   private listSdkSessions(): Promise<SDKSessionInfo[]> {
@@ -46,15 +52,21 @@ export class ClaudeCodeAgentAdapter implements AgentAdapter {
   }
 
   async digest(): Promise<AgentDigestEntry[]> {
-    const sessions = await this.listSdkSessions();
-    return sessions.map((session) => ({
-      id: session.sessionId,
-      agentKind: this.kind,
-      modified: new Date(session.lastModified).toISOString(),
-      messageCount: 0,
-      workingDir: session.cwd ?? '',
-      status: 'completed' as const,
-    }));
+    const [sessions, files] = await Promise.all([this.listSdkSessions(), indexClaudeSessionFiles()]);
+    return mapPool(sessions, SESSION_MODEL_CONCURRENCY, async (session) => {
+      const transcript = files.get(session.sessionId);
+      return {
+        id: session.sessionId,
+        agentKind: this.kind,
+        modified: new Date(session.lastModified).toISOString(),
+        messageCount: 0,
+        ...(transcript
+          ? { tokenCount: await this.tokenCounts.get(transcript, readClaudeSessionTokenCount) }
+          : {}),
+        workingDir: session.cwd ?? '',
+        status: 'completed' as const,
+      };
+    });
   }
 
   async listWorkspaces(): Promise<AgentWorkspace[]> {
@@ -90,6 +102,12 @@ export class ClaudeCodeAgentAdapter implements AgentAdapter {
     const model = transcript
       ? await this.models.get(transcript, readClaudeSessionModel)
       : UNKNOWN_MODEL;
+    const tokenCount = transcript
+      ? await this.tokenCounts.get(transcript, readClaudeSessionTokenCount)
+      : undefined;
+    const usageBreakdown = transcript
+      ? await this.usageBreakdowns.get(transcript, readClaudeSessionUsageBreakdown)
+      : undefined;
     return {
       id: session.sessionId,
       agentKind: this.kind,
@@ -104,6 +122,8 @@ export class ClaudeCodeAgentAdapter implements AgentAdapter {
       lastActivity: new Date(session.lastModified).toISOString(),
       size: Math.max(30, session.fileSize ?? firstPrompt.length),
       messageCount: 0,
+      ...(tokenCount !== undefined ? { tokenCount } : {}),
+      ...(usageBreakdown ? { usageBreakdown } : {}),
       toolCalls: 0,
       tools: [],
       openUrl: `claude://session/${encodeURIComponent(session.sessionId)}`,

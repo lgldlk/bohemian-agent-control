@@ -24,7 +24,7 @@ export class CodexAppServerClient {
   private nextId = 1;
   private readonly pending = new Map<number, PendingRequest>();
 
-  constructor(private readonly command = 'codex') {}
+  constructor(private readonly command = 'codex', private readonly codexHome?: string) {}
 
   async listThreads(): Promise<Record<string, unknown>[]> {
     await this.ensureStarted();
@@ -68,7 +68,7 @@ export class CodexAppServerClient {
   private async start(): Promise<void> {
     const child = spawn(this.command, ['app-server', '--stdio'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
+      env: this.codexHome ? { ...process.env, CODEX_HOME: this.codexHome } : process.env,
     });
     this.child = child;
     child.stdout.on('data', (chunk: Buffer | string) => this.consume(chunk.toString()));

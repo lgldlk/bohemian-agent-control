@@ -11,7 +11,13 @@ import {
   modelFromCodexRecords,
   modelFromPiRecords,
   readJsonlBookends,
+  readClaudeSessionTokenCount,
+  readClaudeSessionUsageBreakdown,
+  readCodexSessionTokenCount,
+  readCodexSessionUsageBreakdown,
   readPiSessionModel,
+  readPiSessionTokenCount,
+  readPiSessionUsageBreakdown,
 } from './sessionModel';
 
 describe('agentModel', () => {
@@ -105,6 +111,48 @@ describe('jsonl bookends + index', () => {
     await writeFile(join(project, `${sessionId}.jsonl`), '{}\n');
     const index = await indexClaudeSessionFiles(join(dir, 'projects'));
     expect(index.get(sessionId)).toBe(join(project, `${sessionId}.jsonl`));
+  });
+});
+
+describe('token counts', () => {
+  it('normalizes Pi usage fields and sums input/output/cache tokens', async () => {
+    const dir = join(tmpdir(), `session-token-pi-${process.pid}-${Date.now()}`);
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, 'pi.jsonl');
+    await writeFile(path, [
+      JSON.stringify({ type: 'message', message: { role: 'assistant', usage: { input: 100, output: 20, cacheRead: 30, cacheWrite: 4 } } }),
+      JSON.stringify({ type: 'usage', usage: { input: 6, output: 2, cacheRead: 0, cacheWrite: 1 } }),
+    ].join('\n'));
+    expect(await readPiSessionTokenCount(path)).toBe(163);
+    expect(await readPiSessionUsageBreakdown(path)).toEqual({ input: 106, output: 22, cacheRead: 30, cacheWrite: 5 });
+  });
+
+  it('normalizes Claude transcript usage fields', async () => {
+    const dir = join(tmpdir(), `session-token-claude-${process.pid}-${Date.now()}`);
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, 'claude.jsonl');
+    await writeFile(path, [
+      JSON.stringify({ type: 'assistant', requestId: 'req-1', message: { id: 'msg-1', usage: {
+        input_tokens: 100, output_tokens: 20, cache_creation_input_tokens: 30, cache_read_input_tokens: 4,
+      } } }),
+      JSON.stringify({ type: 'assistant', requestId: 'req-1', message: { id: 'msg-1', usage: {
+        input_tokens: 100, output_tokens: 25, cache_creation_input_tokens: 30, cache_read_input_tokens: 4,
+      } } }),
+    ].join('\n'));
+    expect(await readClaudeSessionTokenCount(path)).toBe(159);
+    expect(await readClaudeSessionUsageBreakdown(path)).toEqual({ input: 100, output: 25, cacheRead: 4, cacheWrite: 30 });
+  });
+
+  it('uses Codex cumulative total tokens from the latest token event', async () => {
+    const dir = join(tmpdir(), `session-token-codex-${process.pid}-${Date.now()}`);
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, 'codex.jsonl');
+    await writeFile(path, [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { total_tokens: 100, input_tokens: 70, output_tokens: 20, cached_input_tokens: 10 } } } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { total_tokens: 245, input_tokens: 160, output_tokens: 55, cached_input_tokens: 30 }, last_token_usage: { input_tokens: 90, output_tokens: 35, cached_input_tokens: 20 } } } }),
+    ].join('\n'));
+    expect(await readCodexSessionTokenCount(path)).toBe(245);
+    expect(await readCodexSessionUsageBreakdown(path)).toEqual({ input: 160, output: 55, cacheRead: 30, cacheWrite: 0 });
   });
 });
 

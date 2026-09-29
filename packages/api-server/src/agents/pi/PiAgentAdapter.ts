@@ -12,6 +12,10 @@ import {
   SessionModelCache,
   mapPool,
   readPiSessionModel,
+  readPiSessionTokenCount,
+  readPiSessionUsageBreakdown,
+  SessionNumberCache,
+  SessionUsageCache,
 } from '../sessionModel';
 import { createTtlCache } from '../ttlCache';
 
@@ -21,6 +25,8 @@ const LISTING_TTL_MS = 10_000;
 export class PiAgentAdapter implements AgentAdapter {
   readonly kind = 'pi' as const;
   private readonly models = new SessionModelCache();
+  private readonly tokenCounts = new SessionNumberCache();
+  private readonly usageBreakdowns = new SessionUsageCache();
   private readonly listing = createTtlCache<SessionInfo[]>(LISTING_TTL_MS);
 
   constructor(private readonly sessionDir?: string) {}
@@ -47,11 +53,14 @@ export class PiAgentAdapter implements AgentAdapter {
 
   async digest(): Promise<AgentDigestEntry[]> {
     const sessions = await this.listAll();
-    return sessions.map((session) => ({
+    return mapPool(sessions, SESSION_MODEL_CONCURRENCY, async (session) => ({
       id: session.id,
       agentKind: this.kind,
       modified: session.modified.toISOString(),
       messageCount: session.messageCount,
+      ...(session.path
+        ? { tokenCount: await this.tokenCounts.get(session.path, readPiSessionTokenCount) }
+        : {}),
       workingDir: session.cwd,
       status: 'completed' as const,
     }));
@@ -87,6 +96,12 @@ export class PiAgentAdapter implements AgentAdapter {
     const model = session.path
       ? await this.models.get(session.path, readPiSessionModel)
       : UNKNOWN_MODEL;
+    const tokenCount = session.path
+      ? await this.tokenCounts.get(session.path, readPiSessionTokenCount)
+      : undefined;
+    const usageBreakdown = session.path
+      ? await this.usageBreakdowns.get(session.path, readPiSessionUsageBreakdown)
+      : undefined;
     return {
       id: session.id,
       agentKind: this.kind,
@@ -101,6 +116,8 @@ export class PiAgentAdapter implements AgentAdapter {
       lastActivity: session.modified.toISOString(),
       size: Math.max(30, session.messageCount * 3),
       messageCount: session.messageCount,
+      ...(tokenCount !== undefined ? { tokenCount } : {}),
+      ...(usageBreakdown ? { usageBreakdown } : {}),
       toolCalls: 0,
       tools: [],
       // Pi history is local now; the preview layer can use the session id

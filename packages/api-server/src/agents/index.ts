@@ -14,7 +14,7 @@ export { AgentRegistry } from './registry';
 export function createDefaultRegistry(config: ApiConfig): AgentRegistry {
   return new AgentRegistry([
     new PiAgentAdapter(config.piSessionDir),
-    new CodexAgentAdapter(config.codexCommand),
+    new CodexAgentAdapter(config.codexCommand, config.codexHome),
     new ClaudeCodeAgentAdapter(),
   ]);
 }

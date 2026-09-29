@@ -27,8 +27,6 @@ export type LiveCwdCounts = Map<string, number>;
 let cache: { at: number; value: LiveAgentProcess[] } | null = null;
 let inflight: Promise<LiveAgentProcess[]> | null = null;
 
-export { classifyAgentCommand };
-
 export function liveCwdKey(kind: AgentKind, cwd: string): string {
   return `${kind}\0${normalizeCwd(cwd)}`;
 }

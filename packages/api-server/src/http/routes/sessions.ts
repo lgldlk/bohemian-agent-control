@@ -21,6 +21,7 @@ export function sessionsRouter(registry: AgentRegistry, snapshot: SnapshotClock)
           agentKind: s.agentKind,
           modified: s.modified,
           messageCount: s.messageCount,
+          tokenCount: s.tokenCount,
           status: s.status ?? 'completed',
         })),
       });

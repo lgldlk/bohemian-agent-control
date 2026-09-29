@@ -19,7 +19,7 @@ export function useResourceDocument(
 
   useEffect(() => {
     const controller = new AbortController();
-    if (options.defer) {
+    if (defer) {
       setState({ status: 'deferred' });
       return () => controller.abort();
     }
@@ -39,7 +39,7 @@ export function useResourceDocument(
         }
       });
     return () => controller.abort();
-  }, [provider, resource, options.defer]);
+  }, [provider, resource, defer]);
 
   return state;
 }

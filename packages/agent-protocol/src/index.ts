@@ -6,6 +6,7 @@ export type {
   AgentModel,
   AgentSession,
   AgentStatus,
+  AgentUsageBreakdown,
   AgentWorkspace,
   ControlTask,
 } from './types';

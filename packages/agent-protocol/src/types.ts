@@ -8,6 +8,13 @@ export interface AgentModel {
   provider: string;
 }
 
+export interface AgentUsageBreakdown {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
 export interface AgentSession {
   id: string;
   agentKind: AgentKind;
@@ -22,6 +29,9 @@ export interface AgentSession {
   lastActivity: string;
   size: number;
   messageCount: number;
+  /** Total reported input/output/cache tokens, when the provider persists usage. */
+  tokenCount?: number;
+  usageBreakdown?: AgentUsageBreakdown;
   toolCalls: number;
   tools: string[];
   openUrl: string;
@@ -32,6 +42,8 @@ export interface AgentDigestEntry {
   agentKind: AgentKind;
   modified: string | null;
   messageCount: number;
+  /** Total reported input/output/cache tokens, when the provider persists usage. */
+  tokenCount?: number;
   workingDir?: string;
   status?: AgentStatus;
 }
@@ -76,6 +88,9 @@ export interface ControlTask {
   lastActivity: string;
   size: number;
   messageCount: number;
+  /** Total reported input/output/cache tokens, when the provider persists usage. */
+  tokenCount?: number;
+  usageBreakdown?: AgentUsageBreakdown;
   toolCalls: number;
   tools: string[];
   openUrl: string;
@@ -84,9 +99,9 @@ export interface ControlTask {
 export const UNKNOWN_MODEL: AgentModel = { id: 'unknown', provider: '' };
 
 export function sessionFingerprint(
-  s: Pick<AgentDigestEntry, 'agentKind' | 'id' | 'modified' | 'messageCount' | 'status'>,
+  s: Pick<AgentDigestEntry, 'agentKind' | 'id' | 'modified' | 'messageCount' | 'tokenCount' | 'status'>,
 ): string {
-  return `${s.agentKind}:${s.id}:${s.modified ?? ''}:${s.messageCount}:${s.status ?? ''}`;
+  return `${s.agentKind}:${s.id}:${s.modified ?? ''}:${s.messageCount}:${s.tokenCount ?? ''}:${s.status ?? ''}`;
 }
 
 export function toControlTask(s: AgentSession): ControlTask {
@@ -105,6 +120,8 @@ export function toControlTask(s: AgentSession): ControlTask {
     lastActivity: s.lastActivity,
     size: s.size,
     messageCount: s.messageCount,
+    ...(s.tokenCount !== undefined ? { tokenCount: s.tokenCount } : {}),
+    ...(s.usageBreakdown ? { usageBreakdown: s.usageBreakdown } : {}),
     toolCalls: s.toolCalls,
     tools: s.tools,
     openUrl: s.openUrl,
@@ -131,6 +148,8 @@ export function parseControlTask(raw: unknown): ControlTask {
     lastActivity: readDateString(raw.lastActivity, 'lastActivity'),
     size: readFiniteNumber(raw.size, 'size'),
     messageCount: readFiniteNumber(raw.messageCount, 'messageCount'),
+    ...(raw.tokenCount === undefined ? {} : { tokenCount: readFiniteNumber(raw.tokenCount, 'tokenCount') }),
+    ...(raw.usageBreakdown === undefined ? {} : { usageBreakdown: readUsageBreakdown(raw.usageBreakdown) }),
     toolCalls: readFiniteNumber(raw.toolCalls, 'toolCalls'),
     tools: readStringArray(raw.tools, 'tools'),
     openUrl: readString(raw.openUrl, 'openUrl'),
@@ -169,6 +188,22 @@ function readStringArray(value: unknown, field: string): string[] {
 function readAgentKind(value: unknown): AgentKind {
   if (value === 'codex' || value === 'claude-code' || value === 'pi') return value;
   throw new Error(`Invalid task payload: agentKind is unsupported`);
+}
+
+function readUsageBreakdown(value: unknown): AgentUsageBreakdown {
+  if (!isRecord(value)) throw new Error('Invalid task payload: usageBreakdown must be an object');
+  return {
+    input: readNonNegativeNumber(value.input, 'usageBreakdown.input'),
+    output: readNonNegativeNumber(value.output, 'usageBreakdown.output'),
+    cacheRead: readNonNegativeNumber(value.cacheRead, 'usageBreakdown.cacheRead'),
+    cacheWrite: readNonNegativeNumber(value.cacheWrite, 'usageBreakdown.cacheWrite'),
+  };
+}
+
+function readNonNegativeNumber(value: unknown, field: string): number {
+  const number = readFiniteNumber(value, field);
+  if (number < 0) throw new Error(`Invalid task payload: ${field} must be >= 0`);
+  return number;
 }
 
 function readAgentStatus(value: unknown): AgentStatus {

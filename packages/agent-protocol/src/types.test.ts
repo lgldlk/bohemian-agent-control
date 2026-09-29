@@ -26,10 +26,25 @@ describe('parseControlTask', () => {
     expect(parseControlTask(validTask)).toEqual(validTask);
   });
 
+  it('accepts validated token usage fields', () => {
+    expect(parseControlTask({
+      ...validTask,
+      tokenCount: 154,
+      usageBreakdown: { input: 100, output: 20, cacheRead: 4, cacheWrite: 30 },
+    })).toMatchObject({
+      tokenCount: 154,
+      usageBreakdown: { input: 100, output: 20, cacheRead: 4, cacheWrite: 30 },
+    });
+  });
+
   it('rejects malformed fields instead of trusting the JSON shape', () => {
     expect(() => parseControlTask({ ...validTask, progress: '100' })).toThrow('progress');
     expect(() => parseControlTask({ ...validTask, tools: ['read', 1] })).toThrow('tools');
     expect(() => parseControlTask({ ...validTask, lastActivity: 'not-a-date' })).toThrow('lastActivity');
+    expect(() => parseControlTask({
+      ...validTask,
+      usageBreakdown: { input: -1, output: 0, cacheRead: 0, cacheWrite: 0 },
+    })).toThrow('usageBreakdown.input');
   });
 
   it('rejects unknown provider values and non-object payloads', () => {

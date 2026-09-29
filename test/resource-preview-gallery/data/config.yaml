@@ -1,0 +1,15 @@
+gallery:
+  name: resource-preview-gallery
+  date: 2026-09-28
+  theme: github-dark-default
+
+preview:
+  contextLines: 4
+  maximumBoardLines: 260
+  highlightRanges: true
+  renderMarkdown: true
+
+security:
+  allowRemoteImages: false
+  validateRealPath: true
+  maximumBinaryMegabytes: 20

@@ -1,0 +1,21 @@
+:root {
+  color-scheme: dark;
+  --preview-bg: #0d1117;
+  --preview-border: #3f3f46;
+  --preview-accent: #fbbf24;
+}
+
+.preview-panel {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  color: #e4e4e7;
+  background: var(--preview-bg);
+  border: 1px solid var(--preview-border);
+  border-radius: 0.75rem;
+}
+
+.preview-panel [aria-pressed='true'] {
+  color: #18181b;
+  background: var(--preview-accent);
+}

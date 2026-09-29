@@ -1,0 +1,5 @@
+2026-09-28T09:00:00.000Z INFO  resource gallery initialized
+2026-09-28T09:00:00.120Z INFO  markdown renderer ready
+2026-09-28T09:00:00.230Z INFO  shiki language loaded language=tsx
+2026-09-28T09:00:00.340Z WARN  remote markdown image blocked host=example.com
+2026-09-28T09:00:00.450Z INFO  line range focused start=12 end=26

@@ -1,0 +1,15 @@
+{
+  "gallery": "resource-preview-gallery",
+  "createdAt": "2026-09-28",
+  "features": {
+    "syntaxHighlighting": true,
+    "lineRanges": ["12-26", "10:3-15:8"],
+    "markdownImages": true,
+    "interactiveScrolling": true
+  },
+  "resources": [
+    { "type": "typescript", "path": "../code/ExamplePanel.tsx" },
+    { "type": "image", "path": "../assets/resource-preview.svg" },
+    { "type": "audio", "path": "../media/test-tone.wav" }
+  ]
+}

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#18181b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22c55e"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="540" fill="url(#bg)"/>
+  <rect x="50" y="50" width="860" height="440" rx="28" fill="#111827" stroke="#3f3f46" stroke-width="3"/>
+  <rect x="50" y="50" width="860" height="62" rx="28" fill="#18181b"/>
+  <circle cx="86" cy="81" r="9" fill="#ef4444"/>
+  <circle cx="116" cy="81" r="9" fill="#f59e0b"/>
+  <circle cx="146" cy="81" r="9" fill="#22c55e"/>
+  <text x="480" y="88" text-anchor="middle" fill="#a1a1aa" font-family="monospace" font-size="20">resource-preview.svg</text>
+  <rect x="88" y="150" width="80" height="300" rx="10" fill="#0d1117"/>
+  <g fill="#52525b" font-family="monospace" font-size="17" text-anchor="end">
+    <text x="145" y="190">12</text><text x="145" y="224">13</text><text x="145" y="258">14</text>
+    <text x="145" y="292">15</text><text x="145" y="326">16</text><text x="145" y="360">17</text>
+    <text x="145" y="394">18</text><text x="145" y="428">19</text>
+  </g>
+  <rect x="168" y="236" width="690" height="136" fill="#fbbf2418"/>
+  <rect x="168" y="236" width="5" height="136" fill="#fbbf24"/>
+  <g font-family="monospace" font-size="20">
+    <text x="195" y="190" fill="#ff7b72">export function</text>
+    <text x="390" y="190" fill="#d2a8ff"> ResourcePreview</text>
+    <text x="584" y="190" fill="#e6edf3">() {</text>
+    <text x="215" y="224" fill="#ff7b72">const</text><text x="280" y="224" fill="#79c0ff"> range</text><text x="355" y="224" fill="#e6edf3"> = </text><text x="400" y="224" fill="#a5d6ff">'12-19'</text>
+    <text x="215" y="258" fill="#ff7b72">return</text><text x="290" y="258" fill="#e6edf3"> (</text>
+    <text x="240" y="292" fill="#7ee787">&lt;ResourceShape</text><text x="430" y="292" fill="#79c0ff"> range</text><text x="510" y="292" fill="#e6edf3">={range}&gt;</text>
+    <text x="265" y="326" fill="#a5d6ff">Inline preview on the board</text>
+    <text x="240" y="360" fill="#7ee787">&lt;/ResourceShape&gt;</text>
+    <text x="215" y="394" fill="#e6edf3">)</text>
+    <text x="195" y="428" fill="#e6edf3">}</text>
+  </g>
+  <rect x="720" y="132" width="138" height="34" rx="17" fill="url(#accent)"/>
+  <text x="789" y="155" text-anchor="middle" fill="#07110b" font-family="sans-serif" font-size="15" font-weight="700">LINES 14–17</text>
+</svg>

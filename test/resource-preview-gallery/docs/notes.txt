@@ -1,0 +1,10 @@
+RESOURCE PREVIEW MANUAL TEST
+============================
+
+1. Hover over the node and use the mouse wheel.
+2. Select and copy text from inside the node.
+3. Drag the node only from its title bar.
+4. Resize the node and confirm the preview follows its dimensions.
+5. Open ExamplePanel.tsx:12-26 and verify amber highlighting.
+
+Date: 2026-09-28

@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useCallback, useState } from 'react';
 import {
   HTMLContainer,
   Rectangle2d,
@@ -10,7 +10,10 @@ import {
   type TLParentId,
   type TLResizeInfo,
   type TLShapeId,
+  useEditor,
+  useValue,
 } from 'tldraw';
+
 import {
   ClipboardPaste,
   Copy,
@@ -25,11 +28,19 @@ import {
   X,
 } from 'lucide-react';
 import { TerminalAppearanceMenu } from '@bohemian/terminal-ui/appearance-menu';
+import type { TerminalRuntimeState } from '@bohemian/terminal-ui/terminal';
+import { getBoardTerminalLinkResolvers } from './plugins/resourceRuntime';
+import { terminalResourceLinkCapabilities } from '@/resources/resourceApi';
 const TerminalSurface = lazy(() => import('@bohemian/terminal-ui/terminal').then(({ Terminal }) => ({ default: Terminal })));
 import { TERMINAL_DEFAULT_H, TERMINAL_DEFAULT_W, TERMINAL_SHAPE_TYPE } from './boardTerminals';
-import { handleShapeDoubleClick, IconButton, MenuRow, useTerminalShapeEvents } from './events';
-
-export { TERMINAL_DEFAULT_H, TERMINAL_DEFAULT_W, TERMINAL_SHAPE_TYPE };
+import type { TerminalResourceRef } from '@bohemian/terminal-protocol';
+import { createResourceShape } from './resourceBoardOperations';
+import { findTaskShape } from './boardShapes';
+import { shouldAutoFocusAgentInput } from './agentInputFocus';
+import { getBoardTerminalApi } from './terminalApi';
+import { enterSelectedShapeEditAfterClick, handleExitedTerminalDoubleClick, handleShapeDoubleClick, IconButton, MenuRow, useTerminalShapeEvents } from './events';
+import { BoardPluginTerminalOverlayHost } from './plugins/hosts/BoardPluginOverlayHost';
+import type { BoardTerminalOverlayState } from './plugins/types';
 
 export type TerminalShapeProps = {
   terminalId: string;
@@ -98,8 +109,21 @@ export class TerminalShapeUtil extends ShapeUtil<TerminalShape> {
     return this.editor.getEditingShapeId() === shape.id;
   }
 
+  override onClick(shape: TerminalShape) {
+    const terminal = getBoardTerminalApi()?.info(shape.props.terminalId);
+    const taskShapeId = findTaskShape(this.editor, shape.props.nodeId);
+    const taskShape = taskShapeId ? this.editor.getShape(taskShapeId) : undefined;
+    const agentKind = terminal?.agentKind || (taskShape?.type === 'task-card'
+      ? (taskShape.props as { agentKind?: string }).agentKind
+      : undefined);
+    if (!shouldAutoFocusAgentInput(agentKind, terminal?.status ?? shape.props.status)) return;
+    enterSelectedShapeEditAfterClick(this.editor, shape.id);
+  }
+
   override onDoubleClick(shape: TerminalShape) {
-    handleShapeDoubleClick(this.editor, shape);
+    handleShapeDoubleClick(this.editor, shape, () => {
+      void getBoardTerminalApi()?.restart(shape.props.terminalId);
+    });
   }
 
   override getDefaultProps(): TerminalShapeProps {
@@ -138,11 +162,25 @@ export class TerminalShapeUtil extends ShapeUtil<TerminalShape> {
 }
 
 function TerminalShapeBody({ shape }: { shape: TerminalShape }) {
+  const editor = useEditor();
+  const onTerminalInputEvent = useCallback((event: Event) => {
+    editor.markEventAsHandled(event);
+  }, [editor]);
+  const onResourceActivate = useCallback((resource: TerminalResourceRef) => {
+    const bounds = editor.getShapePageBounds(shape.id);
+    createResourceShape(editor, resource, bounds ? {
+      x: bounds.x + bounds.w + 48,
+      y: bounds.y,
+    } : undefined);
+  }, [editor, shape.id]);
+  const [runtimeState, setRuntimeState] = useState<TerminalRuntimeState>({ phase: 'loading' });
+  const cameraZoom = useValue('terminal camera zoom', () => editor.getZoomLevel(), [editor]);
   const {
     handleRef,
     editing,
     resolved,
     client,
+    terminalInfo,
     taskRunning,
     agentStatus,
     boardStatus,
@@ -157,7 +195,12 @@ function TerminalShapeBody({ shape }: { shape: TerminalShape }) {
     onBodyWheel,
     isolate,
     actions,
-  } = useTerminalShapeEvents(shape);
+  } = useTerminalShapeEvents(shape, runtimeState.phase);
+  const overlayState: BoardTerminalOverlayState = missing
+    ? { phase: 'missing', taskStatus: boardStatus, message: 'Terminal session is no longer available' }
+    : !client || !shape.props.terminalId
+      ? { phase: 'connecting', taskStatus: boardStatus }
+      : { ...runtimeState, taskStatus: boardStatus };
 
   return (
     <HTMLContainer
@@ -170,7 +213,7 @@ function TerminalShapeBody({ shape }: { shape: TerminalShape }) {
         background: resolved.theme.background,
       }}
     >
-      <div className={`tl-terminal${taskRunning ? ' is-run' : ''}${editing ? ' is-edit' : ''}`}>
+      <div className={`tl-terminal${taskRunning ? ' is-run' : ''}${editing ? ' is-edit' : ''}`} style={{ background: resolved.theme.background }}>
         <header className="tl-terminal__bar" onPointerDown={onBarPointerDown}>
           <SquareTerminal
             size={13}
@@ -221,6 +264,9 @@ function TerminalShapeBody({ shape }: { shape: TerminalShape }) {
         <div
           className="tl-terminal__body"
           onPointerDown={onBodyPointerDown}
+          onDoubleClickCapture={(event) => {
+            handleExitedTerminalDoubleClick(event, status, overlayState.phase, actions.restart);
+          }}
           onWheel={onBodyWheel}
         >
           {missing ? (
@@ -239,14 +285,28 @@ function TerminalShapeBody({ shape }: { shape: TerminalShape }) {
                   client={client}
                   active={editing}
                   parked={false}
-                  gpu={false}
+                  gpu={true}
+                  customGlyphs
+                  terminalInfo={terminalInfo ?? undefined}
+                  terminalLinkResolvers={getBoardTerminalLinkResolvers()}
+                  terminalResourceCapabilities={terminalResourceLinkCapabilities}
+                  cameraZoom={cameraZoom}
+                  onResourceActivate={onResourceActivate}
                   onFocus={onFocus}
+                  onInputEvent={onTerminalInputEvent}
+                  onStatusChange={(state: TerminalRuntimeState) => setRuntimeState(state)}
                 />
               </Suspense>
             </div>
           ) : (
             <div className="tl-terminal__empty">Connecting…</div>
           )}
+          <BoardPluginTerminalOverlayHost
+            terminalId={shape.props.terminalId}
+            title={title}
+            cwd={cwd}
+            state={overlayState}
+          />
         </div>
       </div>
     </HTMLContainer>

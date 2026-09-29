@@ -1,13 +1,17 @@
 import { useEffect, useRef } from 'react';
-import { getBoardEditor } from './EvidenceBoard';
+import type { TLShapeId } from 'tldraw';
+import { createRafScheduler } from '@/lib/timing';
+import { focusPendingTaskShape, getBoardEditor, subscribeBoardEditor } from './boardEditor';
 import {
   bootstrapNamedFrames,
   forceBoardPaint,
   pruneOrphanShapes,
   refreshTaskCardProps,
-  setBoardSpaceSyncReady,
   syncSpaceToBoard,
 } from './boardSync';
+import { setBoardSpaceSyncReady } from './boardSyncState';
+import { findTaskShape, isBusinessGroupFrame } from './boardShapes';
+import { arrangeGroupFrame } from './boardArrangeEditor';
 import type { Task } from '@/types';
 import type { GroupInput } from './boardSync';
 
@@ -57,39 +61,48 @@ export function useBoardSync({
   dropPointRef.current = dropPoint;
 
   useEffect(() => {
-    if (!enabled) return;
-    if (tasks.length === 0) return;
-
-    // 延迟执行，确保 editor 已经挂载
-    const timer = setTimeout(() => {
+    if (!enabled || tasks.length === 0) return;
+    const sync = () => {
       const editor = getBoardEditor();
       if (!editor) return;
 
       const g = groupsRef.current;
       const map = tasksMapRef.current;
       const before = editor.getCurrentPageShapes().filter((s) => s.type === 'task-card').length;
-
-      // 1. 同步白板：确保所有 space 中的任务都在白板上
-      syncSpaceToBoard(editor, g, map, dropPointRef.current);
-
-      // 2. 刷新卡片属性：更新已有卡片的数据
+      const { createdTaskIds } = syncSpaceToBoard(editor, g, map, dropPointRef.current);
       refreshTaskCardProps(editor, map);
-
-      // 3. 同步分组框架：为命名分组创建 frame
       bootstrapNamedFrames(editor, g);
-      setBoardSpaceSyncReady(true);
 
-      // 4. 清理孤儿卡片：删除不再属于任何分组的卡片
+      const affectedFrames = new Set<TLShapeId>();
+      for (const taskId of createdTaskIds) {
+        const cardId = findTaskShape(editor, taskId);
+        const card = cardId ? editor.getShape(cardId) : undefined;
+        const parent = card && card.parentId.startsWith('shape:')
+          ? editor.getShape(card.parentId as TLShapeId)
+          : undefined;
+        if (parent && isBusinessGroupFrame(parent)) affectedFrames.add(parent.id);
+      }
+      for (const frameId of affectedFrames) {
+        arrangeGroupFrame(editor, frameId, {
+          preserveUnmanagedContent: true,
+          recordHistory: false,
+          emitEvent: false,
+        });
+      }
+
+      setBoardSpaceSyncReady(true);
       pruneOrphanShapes(editor, new Set(spaceIds));
+      focusPendingTaskShape(editor);
 
       const after = editor.getCurrentPageShapes().filter((s) => s.type === 'task-card').length;
-
-      // 如果添加了新卡片，强制重绘以确保渲染
-      if (after > before) {
-        requestAnimationFrame(() => forceBoardPaint(editor));
-      }
-    }, 200);
-
-    return () => clearTimeout(timer);
+      if (after > before) requestAnimationFrame(() => forceBoardPaint(editor));
+    };
+    const scheduler = createRafScheduler(sync);
+    scheduler.schedule();
+    const unsubscribe = subscribeBoardEditor(scheduler.schedule);
+    return () => {
+      unsubscribe();
+      scheduler.cancel();
+    };
   }, [enabled, groups, spaceIds, lastUpdate, tasks.length]);
 }

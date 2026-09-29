@@ -1,10 +1,17 @@
 import { useEffect, useRef } from 'react';
+import { createRafScheduler } from '@/lib/timing';
 import { type Editor, type TLShapeId } from 'tldraw';
 import type { TerminalClient } from '@bohemian/terminal-client';
 import { useTerminalManager } from '@bohemian/terminal-ui/manager';
 import type { CanvasTerminalNode } from '@bohemian/terminal-canvas';
 import { collectDependentShapeIds } from './events/boardNodeGraph';
-import { findTaskShape } from './boardSync';
+import { terminalMatchesIdentity } from '@/domain/terminalIdentity';
+import { findTaskShape } from './boardShapes';
+import { setBoardTerminalApi, type BoardTerminalApi } from './terminalApi';
+import { suppressLiveSession } from './terminalLive';
+import { rebindLaunchCards } from './rebindLaunch';
+import { getBoardTerminalInfos, setBoardInventoryLoaded, setBoardTerminalInfos } from './terminalActivity';
+import { emitBoardPluginEvent } from './plugins/runtime';
 import {
   createTerminalShape,
   findLiveTerminalForSession,
@@ -13,19 +20,12 @@ import {
   focusTerminalShape,
   openNodeOnce,
   launchCommand,
-  rebindLaunchCards,
   restoreCommand,
   restoreSessionId,
-  setBoardTerminalApi,
   setBoardTerminalClient,
-  setBoardTerminalInfos,
-  setBoardInventoryLoaded,
   waitForSourceShape,
   sourceShapeForNode,
-  suppressLiveSession,
-  terminalMatchesIdentity,
   TERMINAL_SHAPE_TYPE,
-  type BoardTerminalApi,
   type TerminalSplitDirection,
 } from './boardTerminals';
 
@@ -33,7 +33,10 @@ export function useBoardTerminals(client: TerminalClient, editor: Editor | null)
   const manager = useTerminalManager(client);
   const { createTerminal, closeTerminal, restartTerminal, renameTerminal, terminals, inventoryLoaded } = manager;
   const terminalsRef = useRef(terminals);
-  const reconcilingMissingRef = useRef(false);
+  const terminalTopology = terminals
+    .map((terminal) => `${terminal.id}:${terminal.info.status}:${terminal.info.nodeId ?? ''}:${terminal.info.agentSessionId ?? ''}:${terminal.info.launchId ?? ''}`)
+    .sort()
+    .join('|');
   terminalsRef.current = terminals;
 
   useEffect(() => {
@@ -47,70 +50,81 @@ export function useBoardTerminals(client: TerminalClient, editor: Editor | null)
 
 
   useEffect(() => {
+    return client.subscribeToEvents((event) => {
+      if (event.type === 'created') {
+        emitBoardPluginEvent({ type: 'terminal-opened', terminalId: event.terminal.id, taskId: event.terminal.nodeId });
+        return;
+      }
+      if (event.type === 'closed') {
+        emitBoardPluginEvent({ type: 'terminal-closed', terminalId: event.terminalId });
+        return;
+      }
+      if (event.type !== 'updated') return;
+      emitBoardPluginEvent({
+        type: 'terminal-status-changed',
+        terminalId: event.terminal.id,
+        status: event.terminal.status,
+      });
+      const previousInfos = getBoardTerminalInfos();
+      const next = new Map(previousInfos);
+      next.set(event.terminal.id, event.terminal);
+      setBoardTerminalInfos(next);
+      if (editor && event.terminal.agentSessionId) {
+        rebindLaunchCards(editor, [event.terminal], previousInfos);
+      }
+    });
+  }, [client, editor]);
+
+  useEffect(() => {
     if (!editor || !inventoryLoaded) return;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let cancelled = false;
     const reconcile = async () => {
-      timer = null;
       if (client.getConnectionState() !== 'connected') return;
       const serverInfos = await client.listTerminals();
+      const previousInfos = getBoardTerminalInfos();
       setBoardTerminalInfos(new Map(serverInfos.map((info) => [info.id, info])));
-      rebindLaunchCards(editor, serverInfos);
+      rebindLaunchCards(editor, serverInfos, previousInfos);
       const available = new Set(serverInfos.map((info) => info.id));
-      const stale = editor.getCurrentPageShapes()
+      const missing = editor.getCurrentPageShapes()
         .filter((shape) => shape.type === TERMINAL_SHAPE_TYPE)
         .filter((shape) => !available.has((shape.props as { terminalId: string }).terminalId));
-      for (const shape of stale) {
+      for (const shape of missing) {
         const props = shape.props as { terminalId: string; nodeId: string };
         const replacement = serverInfos.find((info) =>
           info.status === 'running' && terminalMatchesIdentity(info, props.nodeId),
         );
         if (replacement) {
-          reconcilingMissingRef.current = true;
-          try {
-            editor.deleteShapes([shape.id, ...collectDependentShapeIds(editor, shape)]);
-            await createTerminalShape(editor, {
-              info: replacement,
+          // Rebind in place. Deleting and recreating the shape can trigger
+          // tldraw's delete side effects and makes a transient inventory gap
+          // look like a user-initiated terminal close.
+          editor.updateShapes([{
+            id: shape.id,
+            type: TERMINAL_SHAPE_TYPE,
+            props: {
+              terminalId: replacement.id,
               nodeId: props.nodeId,
-              beside: await waitForSourceShape(editor, props.nodeId),
-            });
-          } finally {
-            reconcilingMissingRef.current = false;
-          }
-          continue;
+              title: replacement.title,
+              cwd: replacement.cwd,
+              status: replacement.status,
+            },
+          }]);
         }
-        const terminalId = props.terminalId;
-        let info;
-        try {
-          info = await client.getTerminalInfo(terminalId);
-        } catch {
-          return; // A disconnected server cannot prove a terminal is gone.
-        }
-        if (cancelled || info || !editor.getShape(shape.id)) continue;
-        reconcilingMissingRef.current = true;
-        try {
-          editor.deleteShapes([shape.id]);
-        } finally {
-          reconcilingMissingRef.current = false;
-        }
+        // A missing inventory entry is not proof that the PTY was closed:
+        // archives may be temporarily unavailable during reconnect/startup.
+        // Keep the shape mounted so the missing overlay can offer recovery.
       }
     };
-    const schedule = () => {
-      if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(() => void reconcile(), 300);
-    };
-    schedule();
+    const scheduler = createRafScheduler(() => void reconcile());
+    scheduler.schedule();
     const unsubscribe = editor.store.listen((entry) => {
       if (Object.values(entry.changes.added).some((record) => record.typeName === 'shape' && record.type === TERMINAL_SHAPE_TYPE)) {
-        schedule();
+        scheduler.schedule();
       }
     }, { scope: 'document' });
     return () => {
-      cancelled = true;
-      if (timer !== null) clearTimeout(timer);
+      scheduler.cancel();
       unsubscribe();
     };
-  }, [client, editor, inventoryLoaded, terminals]);
+  }, [client, editor, inventoryLoaded, terminalTopology]);
 
   useEffect(() => {
     if (!editor) {
@@ -123,8 +137,11 @@ export function useBoardTerminals(client: TerminalClient, editor: Editor | null)
       for (const id of identities) {
         const existing = findTerminalShapeForNode(editor, id);
         if (existing) {
+          const terminalId = (existing.props as { terminalId: string }).terminalId;
+          const info = getBoardTerminalInfos().get(terminalId);
+          if (info?.status === 'exited') await restartTerminal(terminalId);
           focusTerminalShape(editor, existing.id);
-          return (existing.props as { terminalId: string }).terminalId;
+          return terminalId;
         }
       }
       const live = identities.map((id) => findLiveTerminalForSession(id)).find(Boolean);
@@ -149,6 +166,7 @@ export function useBoardTerminals(client: TerminalClient, editor: Editor | null)
       direction?: TerminalSplitDirection;
       resume?: boolean;
     }) => {
+      if (options.node && (!options.node.agentKind || !options.node.cwd)) return null;
       if (options.node && !options.beside) {
         const serverInfos = await client.listTerminals();
         setBoardTerminalInfos(new Map(serverInfos.map((info) => [info.id, info])));
@@ -264,23 +282,6 @@ export function useBoardTerminals(client: TerminalClient, editor: Editor | null)
 
   useEffect(() => {
     if (!editor) return;
-    return editor.store.listen((entry) => {
-      for (const record of Object.values(entry.changes.removed)) {
-        if (record.typeName !== 'shape' || record.type !== TERMINAL_SHAPE_TYPE) continue;
-        const terminalId = (record.props as { terminalId?: string }).terminalId;
-        const nodeId = (record.props as { nodeId?: string }).nodeId;
-        const info = terminalId
-          ? terminalsRef.current.find((terminal) => terminal.id === terminalId)?.info
-          : undefined;
-        suppressLiveSession(nodeId || '');
-        suppressLiveSession(info?.agentSessionId || '');
-        if (terminalId && !reconcilingMissingRef.current) void closeTerminal(terminalId).catch(() => false);
-      }
-    }, { source: 'user', scope: 'document' });
-  }, [closeTerminal, editor]);
-
-  useEffect(() => {
-    if (!editor) return;
     const updates: Array<{ id: TLShapeId; type: typeof TERMINAL_SHAPE_TYPE; props: { title: string; cwd: string; status: string; nodeId: string } }> = [];
     for (const shape of editor.getCurrentPageShapes()) {
       if (shape.type !== TERMINAL_SHAPE_TYPE) continue;
@@ -288,7 +289,7 @@ export function useBoardTerminals(client: TerminalClient, editor: Editor | null)
       const info = terminals.find((terminal) => terminal.id === terminalId)?.info;
       if (!info) continue;
       const props = shape.props as { title: string; cwd: string; status: string; nodeId: string };
-      const nodeId = info.nodeId || info.agentSessionId || props.nodeId;
+      const nodeId = info.agentSessionId || info.nodeId || props.nodeId;
       if (
         props.title === info.title &&
         props.cwd === info.cwd &&

@@ -21,6 +21,24 @@ export function enterShapeEdit(editor: Editor, shapeId: TLShapeId, focus?: () =>
   if (focus) requestAnimationFrame(focus);
 }
 
+/**
+ * ShapeUtil.onClick runs before tldraw finishes its pointing_shape transition.
+ * Entering edit mode synchronously there is immediately overwritten by the
+ * pointer-up transition back to idle, so defer until the click has settled.
+ */
+export function enterSelectedShapeEditAfterClick(
+  editor: Editor,
+  shapeId: TLShapeId,
+  focus?: () => void,
+  schedule: (callback: FrameRequestCallback) => number = requestAnimationFrame,
+) {
+  schedule(() => {
+    const selectedShapeIds = editor.getSelectedShapeIds();
+    if (selectedShapeIds.length !== 1 || selectedShapeIds[0] !== shapeId) return;
+    enterShapeEdit(editor, shapeId, focus);
+  });
+}
+
 export function exitShapeEdit(editor: Editor, blur?: () => void) {
   blur?.();
   editor.setEditingShape(null);
@@ -36,12 +54,34 @@ export function openTaskTerminal(taskId: string) {
   taskTerminalHandler(taskId);
 }
 
+/** Terminal body events do not reach tldraw because xterm owns pointer input. */
+export function handleExitedTerminalDoubleClick(
+  event: { preventDefault(): void; stopPropagation(): void },
+  status: string | undefined,
+  runtimePhase: string | undefined,
+  restart: () => void,
+): boolean {
+  if (status !== 'exited' && runtimePhase !== 'exited') return false;
+  event.preventDefault();
+  event.stopPropagation();
+  restart();
+  return true;
+}
+
 /** ShapeUtil.onDoubleClick 的统一入口：按节点类型分发。 */
 export function handleShapeDoubleClick(
   editor: Editor,
   shape: { id: TLShapeId; type: string; props: object },
+  reopenTerminal?: (shapeId: TLShapeId) => void,
 ) {
   if (shape.type === 'terminal') {
+    const status = 'status' in shape.props && typeof shape.props.status === 'string'
+      ? shape.props.status
+      : undefined;
+    if (status === 'exited' && reopenTerminal) {
+      reopenTerminal(shape.id);
+      return;
+    }
     enterShapeEdit(editor, shape.id);
     return;
   }

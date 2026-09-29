@@ -6,44 +6,17 @@ import {
   type TerminalInfo,
 } from '@bohemian/terminal-protocol';
 import type { CanvasTerminalNode } from '@bohemian/terminal-canvas';
-import { expandFrameToChildren, findTaskShape } from './boardSync';
-import { taskToCardProps, cardPropsChanged, type TaskCardShapeProps } from './TaskCardShape';
-import { getBoardTasks } from './taskSnapshot';
-import { useSpaceStore } from '@/space/spaceStore';
-import { useWorkspaceStore } from '@/workspace/workspaceStore';
+import { findTaskShape, isBusinessGroupFrame } from './boardShapes';
+import { placeLikeBoard, TERMINAL_DEFAULT_H, TERMINAL_DEFAULT_W } from './boardPlacement';
+import { expandFrameToChildren } from './groupFrameEditor';
 import { sessionResumeCommand, sessionStartCommand } from './copySession';
 import { NODE_LINK_ROLE, nodeLinkArrow } from './events/boardNodeGraph';
 import { boundSessionId, terminalMatchesIdentity } from '@/domain/terminalIdentity';
-import { isLiveSuppressed, suppressLiveSession } from './terminalLive';
-export { boundSessionId, terminalMatchesIdentity } from '@/domain/terminalIdentity';
-import { setBoardTerminalApi } from './terminalApi';
-export type { BoardTerminalApi } from './terminalApi';
-export { getBoardTerminalApi, setBoardTerminalApi } from './terminalApi';
-export { isLiveSuppressed, suppressLiveSession } from './terminalLive';
 import type { BoardTerminalApi } from './terminalApi';
-import {
-  getBoardTerminalInfo,
-  getBoardTerminalInfos,
-  setBoardTerminalInfos,
-  setBoardInventoryLoaded,
-  useBoardInventoryLoaded,
-  useBoardTaskProcessState,
-  useBoardAgentActivity,
-  useBoardTerminalInfo,
-} from './terminalActivity';
-export {
-  getBoardTerminalInfo,
-  setBoardTerminalInfos,
-  setBoardInventoryLoaded,
-  useBoardInventoryLoaded,
-  useBoardTaskProcessState,
-  useBoardAgentActivity,
-  useBoardTerminalInfo,
-} from './terminalActivity';
+import { getBoardTerminalInfos } from './terminalActivity';
 
 export const TERMINAL_SHAPE_TYPE = 'terminal' as const;
-export const TERMINAL_DEFAULT_W = 720;
-export const TERMINAL_DEFAULT_H = 440;
+export { TERMINAL_DEFAULT_H, TERMINAL_DEFAULT_W };
 
 export type TerminalSplitDirection = 'horizontal' | 'vertical';
 
@@ -66,13 +39,45 @@ export function useBoardTerminalClient(): TerminalClient | null {
   );
 }
 
-export async function waitForSourceShape(editor: Editor, nodeId: string): Promise<TLShapeId | undefined> {
-  for (let attempt = 0; attempt < 24; attempt += 1) {
-    const source = sourceShapeForNode(editor, nodeId);
-    if (source) return source;
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
-  }
-  return sourceShapeForNode(editor, nodeId);
+export function waitForSourceShape(editor: Editor, nodeId: string): Promise<TLShapeId | undefined> {
+  const current = sourceShapeForNode(editor, nodeId);
+  if (current) return Promise.resolve(current);
+
+  return new Promise((resolve) => {
+    let frame: number | null = null;
+    let remainingFrames = 60;
+    let stopped = false;
+    let unsubscribe = () => {};
+
+    const finish = (value: TLShapeId | undefined) => {
+      if (stopped) return;
+      stopped = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+      unsubscribe();
+      resolve(value);
+    };
+    const check = () => {
+      frame = null;
+      if (stopped) return;
+      const source = sourceShapeForNode(editor, nodeId);
+      if (source) {
+        finish(source);
+        return;
+      }
+      remainingFrames -= 1;
+      if (remainingFrames <= 0) {
+        finish(undefined);
+        return;
+      }
+      frame = requestAnimationFrame(check);
+    };
+    const schedule = () => {
+      if (frame === null) frame = requestAnimationFrame(check);
+    };
+
+    unsubscribe = editor.store.listen(schedule, { scope: 'document' });
+    schedule();
+  });
 }
 export function openNodeOnce(
   node: CanvasTerminalNode,
@@ -137,44 +142,6 @@ export function rebindTerminalShapes(editor: Editor, fromNodeId: string, toNodeI
   return updates.length;
 }
 
-/** Rewrite the launch card in place before space ids change, so sync cannot drop the wire. */
-export function rebindLaunchCards(editor: Editor, infos: Iterable<TerminalInfo>): number {
-  const tasks = getBoardTasks();
-  const updates: Array<{ id: TLShapeId; type: 'task-card'; props: Partial<TaskCardShapeProps> }> = [];
-  let rebound = 0;
-  for (const info of infos) {
-    const from = info.launchId;
-    const to = boundSessionId(info);
-    if (!from || !to || from === to || !from.startsWith('pending-')) continue;
-    const pendingCard = findTaskShape(editor, from);
-    const boundCard = findTaskShape(editor, to);
-    const cardId = pendingCard ?? boundCard;
-    if (cardId) {
-      const current = editor.getShape(cardId)?.props as TaskCardShapeProps | undefined;
-      const task = tasks.get(to);
-      const next = task
-        ? { ...taskToCardProps(task, to), w: current?.w ?? taskToCardProps(task, to).w, h: current?.h ?? taskToCardProps(task, to).h }
-        : { taskId: to };
-      const changed = !current || current.taskId !== to || (task ? cardPropsChanged(current, { ...current, ...next }) : false);
-      if (changed) updates.push({ id: cardId, type: 'task-card', props: next });
-    }
-    if (pendingCard) rebindTerminalShapes(editor, from, to);
-    const space = useSpaceStore.getState();
-    if (space.groups.some((group) => group.taskIds.includes(from))) {
-      space.rebindTaskId(from, to);
-      rebound += 1;
-    } else if (pendingCard) {
-      space.addToGroup(to);
-      rebound += 1;
-    }
-    if (pendingCard || space.groups.some((group) => group.taskIds.includes(from))) {
-      useWorkspaceStore.getState().removePending(from);
-    }
-  }
-  if (updates.length) editor.updateShapes(updates);
-  return rebound;
-}
-
 export async function createTerminalShape(
   editor: Editor,
   options: {
@@ -189,25 +156,25 @@ export async function createTerminalShape(
   const width = TERMINAL_DEFAULT_W;
   const height = TERMINAL_DEFAULT_H;
   const direction = options.direction ?? (beside ? 'vertical' : 'horizontal');
-  let x = bounds.x + (bounds.w - width) / 2;
-  let y = bounds.y + (bounds.h - height) / 2;
-  if (beside && direction === 'horizontal') {
-    x = bounds.x + bounds.w + 48;
-    y = bounds.y;
-  } else if (beside) {
-    x = bounds.x + (bounds.w - width) / 2;
-    y = bounds.y + bounds.h + 48;
-  }
+  const placed = placeLikeBoard({
+    anchor: { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h },
+    width,
+    height,
+    beside: Boolean(beside),
+    direction,
+  });
+  let x = placed.x;
+  let y = placed.y;
 
   let parentId: TLParentId | undefined;
   const frameParent = beside && editor.getShape(beside.parentId)?.type === 'frame'
     ? editor.getShape(beside.parentId)
     : undefined;
   if (frameParent) {
+    const local = editor.getPointInShapeSpace(frameParent, { x, y });
     parentId = frameParent.id;
-    const point = editor.getPointInShapeSpace(frameParent, { x, y });
-    x = point.x;
-    y = point.y;
+    x = local.x;
+    y = local.y;
   }
 
   const id = createShapeId();
@@ -231,7 +198,9 @@ export async function createTerminalShape(
   ]);
 
   if (options.beside) connectShapes(editor, options.beside, id, direction);
-  if (parentId) expandFrameToChildren(editor, parentId as TLShapeId);
+  if (parentId && frameParent && isBusinessGroupFrame(frameParent)) {
+    expandFrameToChildren(editor, parentId as TLShapeId);
+  }
   editor.select(id);
   editor.setEditingShape(id);
   return id;

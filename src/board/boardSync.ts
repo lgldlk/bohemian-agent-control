@@ -2,7 +2,10 @@ import { createShapeId, type Editor, type TLShapeId } from 'tldraw';
 import type { Task } from '@/types';
 import i18n from '@/i18n';
 import { cardPropsChanged, taskToCardProps, type TaskCardShapeProps } from './TaskCardShape';
-export { isBoardSpaceSyncReady, setBoardSpaceSyncReady } from './boardSyncState';
+import { findFrameByGroupId, findTaskShape, groupIdAtPagePoint, groupIdOfFrame, isBusinessGroupFrame } from './boardShapes';
+import { TERMINAL_DEFAULT_H, TERMINAL_DEFAULT_W } from './boardPlacement';
+import { FRAME_PAD as PAD, FRAME_TITLE as TITLE, placeAddedAgent, type LocalChild } from './groupFrame';
+import { expandFrameToChildren, frameContentBoxes } from './groupFrameEditor';
 
 export interface GroupInput {
   id: string;
@@ -10,95 +13,20 @@ export interface GroupInput {
   taskIds: string[];
 }
 
+export interface SpaceToBoardSyncResult {
+  createdTaskIds: string[];
+}
 
 export const UNGROUPED_ID = 'default';
-const PAD = 36;
-const TITLE = 32;
 
 function taskIdOf(shape: { type: string; props: Record<string, unknown> }): string | null {
   if (shape.type !== 'task-card') return null;
-  const v = shape.props.taskId;
-  return typeof v === 'string' ? v : null;
+  const value = shape.props.taskId;
+  return typeof value === 'string' ? value : null;
 }
 
-function isUngrouped(g: { id: string; name: string }) {
-  return g.id === UNGROUPED_ID || g.name === '未分组';
-}
-
-/** 找出某 taskId 对应的 task-card shape */
-export function findTaskShape(editor: Editor, taskId: string): TLShapeId | null {
-  for (const s of editor.getCurrentPageShapes()) {
-    if (taskIdOf(s as { type: string; props: Record<string, unknown> }) === taskId) {
-      return s.id;
-    }
-  }
-  return null;
-}
-
-export function findFrameByGroupId(editor: Editor, groupId: string) {
-  return editor.getCurrentPageShapes().find(
-    (s) => s.type === 'frame' && (s.meta as { groupId?: string } | null)?.groupId === groupId
-  );
-}
-
-export function groupIdOfFrame(shape: { type: string; meta?: Record<string, unknown> | null }): string | null {
-  if (shape.type !== 'frame') return null;
-  const id = shape.meta?.groupId;
-  return typeof id === 'string' ? id : null;
-}
-
-/**
- * 只撑开、不收缩:子卡片超出 frame 时加宽加高;
- * 顶到左边/标题栏时把子节点往里推,框向左上长。
- */
-export function expandFrameToChildren(editor: Editor, frameId: TLShapeId) {
-  const frame = editor.getShape(frameId);
-  if (!frame || frame.type !== 'frame') return;
-  const childIds = editor.getSortedChildIdsForParent(frameId);
-  if (childIds.length === 0) return;
-
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const id of childIds) {
-    const s = editor.getShape(id);
-    if (!s) continue;
-    const geo = editor.getShapeGeometry(s);
-    minX = Math.min(minX, s.x);
-    minY = Math.min(minY, s.y);
-    maxX = Math.max(maxX, s.x + geo.bounds.width);
-    maxY = Math.max(maxY, s.y + geo.bounds.height);
-  }
-  if (!Number.isFinite(minX)) return;
-
-  const fw = (frame.props as { w: number }).w;
-  const fh = (frame.props as { h: number }).h;
-  let dx = 0;
-  let dy = 0;
-  if (minX < PAD) dx = PAD - minX;
-  if (minY < TITLE + PAD) dy = TITLE + PAD - minY;
-  const needW = maxX + dx + PAD;
-  const needH = maxY + dy + PAD;
-  const nextW = Math.max(fw, needW);
-  const nextH = Math.max(fh, needH);
-  if (dx === 0 && dy === 0 && nextW === fw && nextH === fh) return;
-
-  editor.run(() => {
-    if (dx !== 0 || dy !== 0) {
-      editor.updateShapes(
-        childIds.map((id) => {
-          const s = editor.getShape(id)!;
-          return { id, type: s.type, x: s.x + dx, y: s.y + dy };
-        })
-      );
-    }
-    if (nextW !== fw || nextH !== fh) {
-      editor.updateShapes([
-        { id: frame.id, type: 'frame', props: { w: nextW, h: nextH } },
-      ]);
-    }
-  });
+function isUngrouped(group: { id: string; name: string }) {
+  return group.id === UNGROUPED_ID || group.name === '未分组';
 }
 
 /**
@@ -110,32 +38,51 @@ export function syncSpaceToBoard(
   groups: GroupInput[],
   tasksById: Map<string, Task>,
   origin?: { x: number; y: number }
-) {
+): SpaceToBoardSyncResult {
+  const createdTaskIds: string[] = [];
   const grown = new Set<TLShapeId>();
+  const reserved = new Map<TLShapeId, LocalChild[]>();
+  const occupied = new Map<TLShapeId, LocalChild[]>();
   groups.forEach((g, gi) => {
-    const frame = isUngrouped(g) ? undefined : findFrameByGroupId(editor, g.id);
+    let frame = isUngrouped(g) ? undefined : findFrameByGroupId(editor, g.id);
+    if (!frame && origin && isUngrouped(g)) {
+      const underClick = groupIdAtPagePoint(editor, origin);
+      if (underClick) frame = findFrameByGroupId(editor, underClick);
+    }
     g.taskIds.forEach((taskId, i) => {
       if (findTaskShape(editor, taskId)) return;
       const task = tasksById.get(taskId);
       const props = taskToCardProps(task, taskId);
       if (frame) {
-        let x = PAD + (i % 3) * 336;
-        let y = TITLE + PAD + Math.floor(i / 3) * 132;
+        let clickX = PAD + (i % 3) * 336;
+        let clickY = TITLE + PAD + Math.floor(i / 3) * 132;
         if (origin) {
           const local = editor.getPointInShapeSpace(frame, origin);
-          x = local.x;
-          y = local.y;
+          clickX = local.x;
+          clickY = local.y;
         }
+        const taken = occupied.get(frame.id) ?? frameContentBoxes(editor, frame.id);
+        const placed = placeAddedAgent({
+          existing: taken,
+          click: { x: clickX, y: clickY },
+          card: { w: props.w, h: props.h },
+          terminal: { w: TERMINAL_DEFAULT_W, h: TERMINAL_DEFAULT_H },
+        });
         editor.createShapes([
           {
             id: createShapeId(),
             type: 'task-card',
             parentId: frame.id,
-            x,
-            y,
+            x: placed.card.x,
+            y: placed.card.y,
             props,
           },
         ]);
+        createdTaskIds.push(taskId);
+        occupied.set(frame.id, [...taken, placed.card, placed.terminal]);
+        const slot = reserved.get(frame.id) ?? [];
+        slot.push(placed.terminal);
+        reserved.set(frame.id, slot);
         grown.add(frame.id);
       } else {
         const ox = origin?.x ?? 80;
@@ -149,10 +96,12 @@ export function syncSpaceToBoard(
             props,
           },
         ]);
+        createdTaskIds.push(taskId);
       }
     });
   });
-  for (const id of grown) expandFrameToChildren(editor, id);
+  for (const id of grown) expandFrameToChildren(editor, id, reserved.get(id) ?? []);
+  return { createdTaskIds };
 }
 
 /** tasks 到达/更新后,把最新字段写回已有卡片 */
@@ -163,11 +112,13 @@ export function refreshTaskCardProps(editor: Editor, tasksById: Map<string, Task
     const taskId = (s.props as TaskCardShapeProps).taskId;
     const task = tasksById.get(taskId);
     if (!task) continue;
+    const current = s.props as TaskCardShapeProps;
     const next = {
-      ...(s.props as TaskCardShapeProps),
+      ...current,
       ...taskToCardProps(task, taskId),
-      w: (s.props as TaskCardShapeProps).w,
-      h: (s.props as TaskCardShapeProps).h,
+      customTitle: current.customTitle ?? '',
+      w: current.w,
+      h: current.h,
     };
     if (cardPropsChanged(s.props as TaskCardShapeProps, next)) {
       updates.push({ id: s.id, type: 'task-card', props: next });
@@ -236,8 +187,8 @@ export function readGroupsFromBoard(editor: Editor): GroupInput[] {
   const seen = new Set<string>();
 
   for (const s of editor.getCurrentPageShapes()) {
-    if (s.type !== 'frame') continue;
-    const groupId = String((s.meta as { groupId?: string } | null)?.groupId ?? s.id);
+    const groupId = groupIdOfFrame(s);
+    if (!groupId) continue;
     const name = String((s.props as { name?: string }).name || i18n.t('board.unnamed'));
     const taskIds: string[] = [];
     for (const cid of editor.getSortedChildIdsForParent(s.id)) {
@@ -256,109 +207,12 @@ export function readGroupsFromBoard(editor: Editor): GroupInput[] {
     const tid = taskIdOf(s as { type: string; props: Record<string, unknown> });
     if (!tid || seen.has(tid)) continue;
     const parent = editor.getShape(s.parentId);
-    if (parent && parent.type === 'frame') continue;
+    if (parent && isBusinessGroupFrame(parent)) continue;
     ungrouped.push(tid);
     seen.add(tid);
   }
 
   return [{ id: UNGROUPED_ID, name: '未分组', taskIds: ungrouped }, ...named];
-}
-
-function nextGroupName(editor: Editor): string {
-  const used = new Set(
-    editor
-      .getCurrentPageShapes()
-      .filter((s) => s.type === 'frame')
-      .map((s) => String((s.props as { name?: string }).name ?? ''))
-  );
-  let n = 1;
-  while (used.has(i18n.t('board.groupN', { n }))) n += 1;
-  return i18n.t('board.groupN', { n });
-}
-
-function selectedTaskCards(editor: Editor) {
-  return editor.getSelectedShapes().filter((s) => s.type === 'task-card');
-}
-
-/**
- * 把当前选中的任务卡编成一组(显式操作:Cmd+G / 右键 / 底栏按钮)。
- * 框选本身不建组;拖到空白也不建组。
- */
-export function createGroupFromSelection(editor: Editor): boolean {
-  const cards = selectedTaskCards(editor);
-  if (cards.length === 0) return false;
-
-  const parentIds = new Set(cards.map((c) => c.parentId));
-  if (parentIds.size === 1) {
-    const parent = editor.getShape(cards[0].parentId);
-    if (parent?.type === 'frame') {
-      const childCards = editor
-        .getSortedChildIdsForParent(parent.id)
-        .map((id) => editor.getShape(id))
-        .filter((s) => s?.type === 'task-card');
-      if (childCards.length === cards.length) return false;
-    }
-  }
-
-  const bounds = editor.getSelectionPageBounds();
-  if (!bounds) return false;
-
-  editor.markHistoryStoppingPoint('编成一组');
-  const frameId = createShapeId();
-  const groupId = `g-${Date.now().toString(36)}`;
-  editor.createShapes([
-    {
-      id: frameId,
-      type: 'frame',
-      x: bounds.x - PAD,
-      y: bounds.y - PAD - TITLE,
-      props: {
-        w: bounds.w + PAD * 2,
-        h: bounds.h + PAD * 2 + TITLE,
-        name: nextGroupName(editor),
-      },
-      meta: { groupId },
-    },
-  ]);
-  editor.reparentShapes(
-    cards.map((c) => c.id),
-    frameId
-  );
-  editor.select(frameId);
-  return true;
-}
-
-function ungroupFrame(editor: Editor, frameId: TLShapeId) {
-  const children = editor.getSortedChildIdsForParent(frameId);
-  if (children.length > 0) {
-    editor.reparentShapes(children, editor.getCurrentPageId());
-  }
-  editor.deleteShapes([frameId]);
-}
-
-/** 移出分组:选中的卡回到页面;选中的框解散,卡变游离。不删除卡片。 */
-export function ungroupSelection(editor: Editor): boolean {
-  const selected = editor.getSelectedShapes();
-  const frames = selected.filter((s) => s.type === 'frame');
-  const cards = selected.filter((s) => s.type === 'task-card');
-  if (frames.length === 0 && cards.length === 0) return false;
-
-  editor.markHistoryStoppingPoint('移出分组');
-  const pageId = editor.getCurrentPageId();
-
-  for (const f of frames) ungroupFrame(editor, f.id);
-
-  const toFree = cards.filter((c) => {
-    const p = editor.getShape(c.parentId);
-    return p?.type === 'frame';
-  });
-  if (toFree.length > 0) {
-    editor.reparentShapes(
-      toFree.map((c) => c.id),
-      pageId
-    );
-  }
-  return true;
 }
 
 /** 删除已不在任何分组(含未分组)的 task-card —— 即从空间移除 */
@@ -372,9 +226,10 @@ export function pruneOrphanShapes(editor: Editor, aliveTaskIds: Set<string>) {
   if (orphans.length > 0) editor.deleteShapes(orphans);
 }
 
-export function focusTaskShape(editor: Editor, taskId: string) {
+export function focusTaskShape(editor: Editor, taskId: string): boolean {
   const id = findTaskShape(editor, taskId);
-  if (!id) return;
+  if (!id) return false;
   editor.select(id);
   editor.zoomToSelection({ animation: { duration: 300 } });
+  return true;
 }

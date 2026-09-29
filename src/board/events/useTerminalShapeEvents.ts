@@ -4,18 +4,19 @@ import {
   resolveTerminalAppearance,
   useTerminalAppearance,
 } from '@bohemian/terminal-ui/appearance';
-import type { TerminalHandle } from '@bohemian/terminal-ui/terminal';
+import type { TerminalHandle, TerminalRuntimePhase } from '@bohemian/terminal-ui/terminal';
+import { observedProcessState } from '@/domain/terminalIdentity';
+import { projectCardStatus, isRunningPhase } from '@/lib/boardStatus';
+import { focusAgentInput, isAgentInputReady } from '../agentInputFocus';
+import { useBoardTerminalClient } from '../boardTerminals';
+import { getBoardTerminalApi } from '../terminalApi';
 import {
-  getBoardTerminalApi,
-  useBoardTerminalClient,
-  useBoardInventoryLoaded,
   useBoardAgentActivity,
+  useBoardInventoryLoaded,
   useBoardTaskProcessState,
   useBoardTerminalInfo,
-} from '../boardTerminals';
+} from '../terminalActivity';
 import { useBoardNodeEvents } from './useBoardNodeEvents';
-import { projectCardStatus } from '@/lib/boardStatus';
-import { observedProcessState } from '@/domain/terminalIdentity';
 
 const TERMINAL_CHROME = 'button, summary, .tl-terminal__menu';
 
@@ -33,7 +34,10 @@ interface TerminalShapeLike {
 }
 
 /** 终端节点事件：父级 BoardNodeEvents + 分屏/重启/关闭。 */
-export function useTerminalShapeEvents(shape: TerminalShapeLike) {
+export function useTerminalShapeEvents(
+  shape: TerminalShapeLike,
+  runtimePhase: TerminalRuntimePhase,
+) {
   const handleRef = useRef<TerminalHandle>(null);
   const appearance = useTerminalAppearance();
   const resolved = resolveTerminalAppearance(appearance);
@@ -41,7 +45,7 @@ export function useTerminalShapeEvents(shape: TerminalShapeLike) {
   const client = useBoardTerminalClient();
   const inventoryLoaded = useBoardInventoryLoaded();
   const missing = inventoryLoaded && !live;
-  const nodeId = live?.nodeId || live?.agentSessionId || shape.props.nodeId;
+  const nodeId = live?.agentSessionId || live?.nodeId || shape.props.nodeId;
   const processState = useBoardTaskProcessState(nodeId);
   const processLive = processState === 'running';
   const agentStatus = useBoardAgentActivity(nodeId) ?? live?.agentStatus;
@@ -52,8 +56,16 @@ export function useTerminalShapeEvents(shape: TerminalShapeLike) {
   const boardStatus = card.task;
   const shapeId = shape.id;
   const terminalId = shape.props.terminalId;
+  const agentKind = live?.agentKind;
+  const terminalStatus = live?.status || shape.props.status;
+  const focusPendingRef = useRef(false);
+  const wasEditingRef = useRef(false);
 
-  const focus = useCallback(() => handleRef.current?.focus(), []);
+  const focus = useCallback(() => {
+    const target = handleRef.current;
+    if (!target) return;
+    if (!focusAgentInput(agentKind, target)) target.focus();
+  }, [agentKind]);
   const blur = useCallback(() => handleRef.current?.blur(), []);
 
   const node = useBoardNodeEvents(shapeId, {
@@ -86,8 +98,20 @@ export function useTerminalShapeEvents(shape: TerminalShapeLike) {
   }, [shapeId]);
 
   useLayoutEffect(() => {
-    if (node.editing) handleRef.current?.focus();
-  }, [node.editing]);
+    const becameEditing = node.editing && !wasEditingRef.current;
+    wasEditingRef.current = node.editing;
+    if (!node.editing) {
+      focusPendingRef.current = false;
+      return;
+    }
+    if (!isAgentInputReady(agentKind, terminalStatus, runtimePhase)) {
+      focusPendingRef.current = true;
+      return;
+    }
+    if (!becameEditing && !focusPendingRef.current) return;
+    focusPendingRef.current = false;
+    focus();
+  }, [agentKind, focus, node.editing, runtimePhase, terminalStatus]);
 
   useLayoutEffect(() => {
     handleRef.current?.fit();
@@ -98,13 +122,14 @@ export function useTerminalShapeEvents(shape: TerminalShapeLike) {
     handleRef,
     resolved,
     client,
-    taskRunning: card.terminal === 'open' || card.terminal === 'starting',
+    terminalInfo: live,
+    taskRunning: isRunningPhase(card.task),
     agentStatus,
     boardStatus,
     blocked: card.task === 'blocked',
     title: live?.title || shape.props.title,
     cwd: live?.cwd || shape.props.cwd,
-    status: live?.status || shape.props.status,
+    status: terminalStatus,
     onFocus: node.onActivate,
     onBarPointerDown: node.onChromePointerDown,
     missing,

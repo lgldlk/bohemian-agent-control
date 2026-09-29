@@ -15,9 +15,16 @@ export interface BoardTerminalApi {
 }
 
 let api: BoardTerminalApi | null = null;
+const apiListeners = new Set<() => void>();
 
 export function setBoardTerminalApi(next: BoardTerminalApi | null): void {
   api = next;
+  apiListeners.forEach((listener) => listener());
+}
+
+export function subscribeBoardTerminalApi(listener: () => void): () => void {
+  apiListeners.add(listener);
+  return () => apiListeners.delete(listener);
 }
 
 export function getBoardTerminalApi(): BoardTerminalApi | null {

@@ -3,9 +3,9 @@ import EvidenceBoard from './EvidenceBoard';
 import { useBoardSync } from './useBoardSync';
 import { useBoardOperations } from '@/hooks/useBoardOperations';
 import { getBoardTerminalInfos } from './terminalActivity';
-import { rebindLaunchCards } from './boardTerminals';
+import { rebindLaunchCards } from './rebindLaunch';
 import { setBoardTasks } from './taskSnapshot';
-import { getBoardEditor } from './EvidenceBoard';
+import { getBoardEditor } from './boardEditor';
 import type { Task } from '@/types';
 import type { SpaceGroup } from '@/space/spaceStore';
 import type { TerminalClient } from '@bohemian/terminal-client';
@@ -18,7 +18,7 @@ export interface BoardWorkspaceProps {
   search: string;
   terminalClient: TerminalClient;
   onOpenTerminal: (taskId: string) => void;
-  onBlankDoubleClick: (groupId?: string) => void;
+  onBlankDoubleClick: (x: number, y: number, groupId?: string) => void;
 }
 
 export default function BoardWorkspace({
@@ -60,7 +60,7 @@ export default function BoardWorkspace({
       onDropNewTask={dropToBoard}
       onBlankDoubleClick={(x, y, groupId) => {
         dropPointRef.current = { x, y };
-        onBlankDoubleClick(groupId);
+        onBlankDoubleClick(x, y, groupId);
       }}
     />
   );

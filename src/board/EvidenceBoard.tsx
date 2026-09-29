@@ -1,37 +1,82 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import {
+  AssetToolbarItem,
+  CheckBoxToolbarItem,
+  CloudToolbarItem,
   DEFAULT_THEME,
+  DefaultStylePanel,
+  DefaultToolbar,
+  DiamondToolbarItem,
+  DrawToolbarItem,
+  EllipseToolbarItem,
+  EraserToolbarItem,
+  FrameToolbarItem,
+  HandToolbarItem,
+  HeartToolbarItem,
+  HexagonToolbarItem,
+  HighlightToolbarItem,
+  LaserToolbarItem,
+  LineToolbarItem,
+  NoteToolbarItem,
+  OvalToolbarItem,
+  RectangleToolbarItem,
+  RhombusToolbarItem,
+  SelectToolbarItem,
+  StarToolbarItem,
+  TextToolbarItem,
   Tldraw,
+  TldrawUiButtonIcon,
+  TldrawUiDropdownMenuContent,
+  TldrawUiDropdownMenuGroup,
+  TldrawUiDropdownMenuRoot,
+  TldrawUiDropdownMenuTrigger,
+  TldrawUiMenuContextProvider,
+  TldrawUiMenuItem,
+  TldrawUiPopover,
+  TldrawUiPopoverContent,
+  TldrawUiPopoverTrigger,
+  TldrawUiToolbar,
+  TldrawUiToolbarButton,
+  TriangleToolbarItem,
   useEditor,
+  useValue,
+  XBoxToolbarItem,
   type Editor,
   type TLGridProps,
   type TLThemes,
   type TLUiOverrides,
 } from 'tldraw';
-import { History } from 'lucide-react';
+import { History, SlidersHorizontal } from 'lucide-react';
+import { createDebouncedTask } from '@/lib/timing';
 import { TerminalHistoryPanel } from '@bohemian/terminal-ui/history-panel';
-import { BoardContextMenu, selectedSessions } from './BoardContextMenu';
+import { BoardContextActionsProvider, BoardContextMenu, selectedSessions } from './BoardContextMenu';
 import { formatSessionCopy } from './copySession';
-import { getBoardTerminalApi } from './boardTerminals';
+import { getBoardTerminalApi } from './terminalApi';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import type { Task } from '@/types';
 import type { TerminalClient } from '@bohemian/terminal-client';
-import { TaskCardShapeUtil, taskToCardProps } from './TaskCardShape';
+import { TaskCardShapeUtil } from './TaskCardShape';
 import { TerminalShapeUtil } from './TerminalShape';
+import { ResourceShapeUtil } from './ResourceShape';
+import { importDroppedFilesToBoard } from './resourceDrop';
 import { useBoardTerminals } from './useBoardTerminals';
-import {
-  createGroupFromSelection,
-  expandFrameToChildren,
-  focusTaskShape as focusShape,
-  readGroupsFromBoard,
-  setBoardSpaceSyncReady,
-  isBoardSpaceSyncReady,
-  ungroupSelection,
-} from './boardSync';
-import { createShapeId as makeShapeId, type TLParentId, type TLShapeId } from 'tldraw';
-import { useSpaceStore } from '@/space/spaceStore';
+import { getBoardEditor, setBoardEditor } from './boardEditor';
+import { createEmptyBusinessGroupAtPoint, createGroupFromSelection, ungroupSelection } from './groupFrameEditor';
+import { listenBoardGroups } from './groupSync';
 import { useBoardCanvasEvents, useBoardNodeCascade, useGroupActionEvents } from './events';
+import { bindScreenSizedGroupTitles } from './groupFrameTitle';
+import { arrangeGroupFrame, arrangeWholeBoard } from './boardArrangeEditor';
+import { BoardPluginOverlayHost } from './plugins/hosts/BoardPluginOverlayHost';
+import { BoardPluginPageOverlayHost, BoardPluginPanel } from './plugins/hosts/BoardPluginPanelHost';
+import { BoardPluginToolbarButtons } from './plugins/hosts/BoardPluginToolbarHost';
+import { mountBoardPluginRuntime } from './plugins/runtime';
+import { BoardPluginRuntimeProvider } from './plugins/runtimeScope';
+import { BoardPluginRuntimeCore } from './plugins/runtimeCore';
+import { PluginContentShapeUtil } from './plugins/PluginContentShape';
+import AgentQuickNavigator from './AgentQuickNavigator';
+import { isBusinessGroupFrame } from './boardShapes';
+import { FRAME_DEFAULT_H, FRAME_DEFAULT_W } from './groupFrame';
 
 interface EvidenceBoardProps {
   tasks?: Task[];
@@ -46,7 +91,7 @@ interface EvidenceBoardProps {
 /** 白板文档(卡片坐标 / frame / 连线 / 相机)存在浏览器 IndexedDB,刷新不丢 */
 export const BOARD_PERSIST_KEY = 'bohemian-agent-control:board:v1';
 
-const BOARD_SHAPE_UTILS = [TaskCardShapeUtil, TerminalShapeUtil];
+const BOARD_SHAPE_UTILS = [TaskCardShapeUtil, TerminalShapeUtil, ResourceShapeUtil, PluginContentShapeUtil];
 
 /** 节点选中描边画在 canvas overlay 上,必须走 theme,CSS 盖不住 */
 const BOARD_THEMES: Partial<TLThemes> = {
@@ -84,22 +129,55 @@ function BoardLoadingScreen() {
   );
 }
 
-function CanvasOverlays({ client, search }: { client: TerminalClient; search?: string }) {
+function CanvasOverlays({
+  tasks,
+  client,
+  search,
+  stylePanelOpen,
+  onToggleStylePanel,
+  onOpenTerminal,
+  pluginRuntime,
+}: {
+  tasks: readonly Task[];
+  client: TerminalClient;
+  search?: string;
+  stylePanelOpen: boolean;
+  onToggleStylePanel: () => void;
+  onOpenTerminal: (taskId: string) => void;
+  pluginRuntime: BoardPluginRuntimeCore;
+}) {
   const [historyOpen, setHistoryOpen] = useState(false);
   return (
     <>
+      <AgentQuickNavigator tasks={tasks} onOpenTerminal={onOpenTerminal} />
+      <BoardPluginPageOverlayHost tasks={tasks} />
+      <BoardPluginPanel tasks={tasks} />
+      <BoardPluginOverlayHost tasks={tasks} />
+      <BoardPluginRuntime tasks={tasks} runtime={pluginRuntime} />
       <BoardTerminalRuntime client={client} />
       <BoardSearch query={search ?? ''} />
       <GroupActionBar />
-      <button
-        type="button"
-        title="Search command history"
-        aria-label="Search command history"
-        onClick={() => setHistoryOpen((open) => !open)}
-        className={`fixed bottom-3 right-3 z-[160000] flex h-8 w-8 items-center justify-center border border-zinc-700 bg-zinc-950 shadow-xl ${historyOpen ? 'text-white' : 'text-zinc-400'} hover:bg-zinc-800 hover:text-white`}
-      >
-        <History size={15} />
-      </button>
+      <div className="fixed bottom-3 right-3 z-[160000] flex items-center gap-1 border border-zinc-700 bg-zinc-950 p-1 shadow-xl">
+        <button
+          type="button"
+          title="Toggle style panel"
+          aria-label="Toggle style panel"
+          aria-pressed={stylePanelOpen}
+          onClick={onToggleStylePanel}
+          className={`flex h-8 w-8 items-center justify-center ${stylePanelOpen ? 'bg-zinc-800 text-white' : 'text-zinc-400'} hover:bg-zinc-800 hover:text-white`}
+        >
+          <SlidersHorizontal size={15} />
+        </button>
+        <button
+          type="button"
+          title="Search command history"
+          aria-label="Search command history"
+          onClick={() => setHistoryOpen((open) => !open)}
+          className={`flex h-8 w-8 items-center justify-center ${historyOpen ? 'bg-zinc-800 text-white' : 'text-zinc-400'} hover:bg-zinc-800 hover:text-white`}
+        >
+          <History size={15} />
+        </button>
+      </div>
       {historyOpen && (
         <TerminalHistoryPanel
           client={client}
@@ -116,12 +194,11 @@ function CanvasOverlays({ client, search }: { client: TerminalClient; search?: s
 
 function BoardSearch({ query }: { query: string }) {
   const editor = useEditor();
-  const timer = useRef<number | null>(null);
   useEffect(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return;
-    if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
+    const search = createDebouncedTask(200);
+    search.schedule(() => {
       const ids = editor.getCurrentPageShapes()
         .filter((shape) => {
           if (shape.type !== 'task-card') return false;
@@ -134,11 +211,17 @@ function BoardSearch({ query }: { query: string }) {
       if (!ids.length) return;
       editor.setSelectedShapes(ids);
       editor.zoomToSelection({ animation: { duration: 220 } });
-    }, 200);
-    return () => {
-      if (timer.current) window.clearTimeout(timer.current);
-    };
+    });
+    return () => search.cancel();
   }, [editor, query]);
+  return null;
+}
+
+function BoardPluginRuntime({ tasks, runtime }: { tasks: readonly Task[]; runtime: BoardPluginRuntimeCore }) {
+  const editor = useEditor();
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  useEffect(() => mountBoardPluginRuntime(editor, tasksRef, runtime), [editor, runtime]);
   return null;
 }
 
@@ -149,10 +232,156 @@ function BoardTerminalRuntime({ client }: { client: TerminalClient }) {
   return null;
 }
 
+function ArrangeToolbarMenu() {
+  const editor = useEditor();
+  const { t } = useTranslation();
+  const frameId = useValue(
+    'arrange-frame',
+    () => {
+      const frames = editor.getSelectedShapes().filter((shape) => isBusinessGroupFrame(shape));
+      return frames.length === 1 ? frames[0].id : null;
+    },
+    [editor],
+  );
+
+  return (
+    <TldrawUiDropdownMenuRoot id="board-arrange-menu">
+      <TldrawUiDropdownMenuTrigger>
+        <TldrawUiToolbarButton type="tool" title={t('board.arrangeMenu')}>
+          <TldrawUiButtonIcon icon="distribute-horizontal" />
+        </TldrawUiToolbarButton>
+      </TldrawUiDropdownMenuTrigger>
+      <TldrawUiDropdownMenuContent side="top" align="center">
+        <TldrawUiMenuContextProvider type="menu" sourceId="toolbar">
+          <TldrawUiDropdownMenuGroup>
+            <TldrawUiMenuItem
+              id="arrange-board"
+              label="action.arrange-board"
+              iconLeft="distribute-horizontal"
+              onSelect={() => {
+                arrangeWholeBoard(editor);
+              }}
+            />
+            <TldrawUiMenuItem
+              id="arrange-group"
+              label="action.arrange-group"
+              iconLeft="tool-frame"
+              disabled={!frameId}
+              onSelect={() => {
+                if (frameId) arrangeGroupFrame(editor, frameId);
+              }}
+            />
+          </TldrawUiDropdownMenuGroup>
+        </TldrawUiMenuContextProvider>
+      </TldrawUiDropdownMenuContent>
+    </TldrawUiDropdownMenuRoot>
+  );
+}
+
+function MoreToolsMenu() {
+  const editor = useEditor();
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+
+  const close = () => {
+    setOpen(false);
+    editor.menus.deleteOpenMenu('board-more-tools');
+  };
+
+  return (
+    <TldrawUiPopover id="board-more-tools" open={open} onOpenChange={setOpen}>
+      <TldrawUiPopoverTrigger>
+        <TldrawUiToolbarButton type="tool" title={t('board.moreTools')}>
+          <TldrawUiButtonIcon icon="dots-horizontal" />
+        </TldrawUiToolbarButton>
+      </TldrawUiPopoverTrigger>
+      <TldrawUiPopoverContent side="top" align="center">
+        <TldrawUiToolbar
+          label={t('board.moreTools')}
+          orientation="grid"
+          className="tl-board-more-tools"
+          onClick={close}
+        >
+          <TldrawUiMenuContextProvider type="toolbar-overflow" sourceId="toolbar">
+            <DrawToolbarItem />
+            <EraserToolbarItem />
+            <AssetToolbarItem />
+            <LineToolbarItem />
+            <HighlightToolbarItem />
+            <FrameToolbarItem />
+            <RectangleToolbarItem />
+            <EllipseToolbarItem />
+            <TriangleToolbarItem />
+            <DiamondToolbarItem />
+            <HexagonToolbarItem />
+            <OvalToolbarItem />
+            <RhombusToolbarItem />
+            <StarToolbarItem />
+            <CloudToolbarItem />
+            <HeartToolbarItem />
+            <XBoxToolbarItem />
+            <CheckBoxToolbarItem />
+            <LaserToolbarItem />
+          </TldrawUiMenuContextProvider>
+        </TldrawUiToolbar>
+      </TldrawUiPopoverContent>
+    </TldrawUiPopover>
+  );
+}
+
+function BusinessGroupToolbarButton() {
+  const editor = useEditor();
+  const { t } = useTranslation();
+  const selectedTaskCount = useValue(
+    'business-group-selection',
+    () => editor.getSelectedShapes().filter((shape) => shape.type === 'task-card').length,
+    [editor],
+  );
+
+  const createGroup = () => {
+    if (selectedTaskCount > 0) {
+      createGroupFromSelection(editor);
+      return;
+    }
+    const viewport = editor.getViewportPageBounds();
+    createEmptyBusinessGroupAtPoint(editor, {
+      x: viewport.x + (viewport.w - FRAME_DEFAULT_W) / 2,
+      y: viewport.y + (viewport.h - FRAME_DEFAULT_H) / 2,
+    });
+  };
+
+  return (
+    <TldrawUiToolbarButton
+      type="tool"
+      title={selectedTaskCount > 0 ? t('board.groupSelection') : t('board.createGroup')}
+      onClick={createGroup}
+    >
+      <TldrawUiButtonIcon icon="group" />
+    </TldrawUiToolbarButton>
+  );
+}
+
+function BoardToolbar() {
+  return (
+    <DefaultToolbar minItems={20} maxItems={20}>
+      <SelectToolbarItem />
+      <HandToolbarItem />
+      <TextToolbarItem />
+      <NoteToolbarItem />
+      <BusinessGroupToolbarButton />
+      <ArrangeToolbarMenu />
+      <MoreToolsMenu />
+      <BoardPluginToolbarButtons />
+    </DefaultToolbar>
+  );
+}
+
 const BOARD_COMPONENTS = {
   Grid: PixelGrid,
   LoadingScreen: BoardLoadingScreen,
   ContextMenu: BoardContextMenu,
+  MenuPanel: null,
+  Toolbar: BoardToolbar,
 };
 
 const BOARD_OVERRIDES: TLUiOverrides = {
@@ -206,6 +435,25 @@ const BOARD_OVERRIDES: TLUiOverrides = {
       'action.copy-session': 'Copy session',
       'action.copy-session.copied': 'Session copied',
       'action.copy-session.failed': 'Could not copy session',
+      'action.arrange-board': 'Arrange board',
+      'action.arrange-group': 'Arrange selected group',
+      'action.board-add-agent': 'Add Agent here',
+      'action.board-create-group': 'Create group here',
+      'action.board-open-terminal': 'Open or focus terminal',
+      'action.board-locate-agent': 'Locate Agent card',
+      'action.board-restart-terminal': 'Restart terminal',
+      'action.board-recover-terminal': 'Recover terminal',
+      'action.board-close-terminal': 'Close and remove terminal',
+      'action.board-move-to-group': 'Move to group',
+      'action.board-group': 'Group selected Agents',
+      'action.board-ungroup': 'Move out of group',
+      'action.board-remove-agent': 'Remove Agent from board',
+      'action.board-remove-agents': 'Remove selected Agents from board',
+      'action.board-add-agent-group': 'Add Agent to this group',
+      'action.board-rename-group': 'Rename group',
+      'action.board-dissolve-group': 'Dissolve group, keep contents',
+      'action.board-locate-link-source': 'Locate link source',
+      'action.board-locate-link-target': 'Locate link target',
     },
     'zh-cn': {
       'action.group': '编成一组',
@@ -213,6 +461,25 @@ const BOARD_OVERRIDES: TLUiOverrides = {
       'action.copy-session': '复制会话',
       'action.copy-session.copied': '已复制会话',
       'action.copy-session.failed': '复制会话失败',
+      'action.arrange-board': '整理整个画板',
+      'action.arrange-group': '整理选中的组',
+      'action.board-add-agent': '在这里添加 Agent',
+      'action.board-create-group': '在这里新建分组',
+      'action.board-open-terminal': '打开或聚焦终端',
+      'action.board-locate-agent': '定位关联 Agent',
+      'action.board-restart-terminal': '重新启动终端',
+      'action.board-recover-terminal': '恢复终端',
+      'action.board-close-terminal': '关闭并移除终端',
+      'action.board-move-to-group': '移动到分组',
+      'action.board-group': '编组选中的 Agent',
+      'action.board-ungroup': '移出当前分组',
+      'action.board-remove-agent': '从画板移除 Agent',
+      'action.board-remove-agents': '从画板移除所选 Agent',
+      'action.board-add-agent-group': '添加 Agent 到这个组',
+      'action.board-rename-group': '重命名分组',
+      'action.board-dissolve-group': '解散分组，保留内容',
+      'action.board-locate-link-source': '定位连线起点',
+      'action.board-locate-link-target': '定位连线终点',
     },
   },
 };
@@ -302,26 +569,54 @@ function PixelGrid({ x, y, z, size }: TLGridProps) {
  * - 数据同步由外部的 useBoardSync hook 处理
  */
 export default function EvidenceBoard({
+  tasks = [],
   search,
   terminalClient,
   onOpenTerminal,
   onDropNewTask,
   onBlankDoubleClick,
 }: EvidenceBoardProps) {
-  const { editorRef, dropRef } = useBoardCanvasEvents({
+  const { t } = useTranslation();
+  const { editorRef, dropRef, fileDropState } = useBoardCanvasEvents({
     onOpenTerminal,
     onDropNewTask,
+    onDropFiles: importDroppedFilesToBoard,
     onBlankDoubleClick,
   });
 
+  const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  const [pluginRuntime] = useState(() => new BoardPluginRuntimeCore());
+
+  useEffect(() => {
+    const root = dropRef.current;
+    if (!root) return;
+    return bindScreenSizedGroupTitles(root);
+  }, [dropRef]);
+
   return (
-    <div ref={dropRef} className="tldraw-dark-host h-full w-full">
-      <Tldraw
+    <div ref={dropRef} className="tldraw-dark-host relative h-full w-full">
+      <BoardPluginRuntimeProvider runtime={pluginRuntime}>
+        <BoardContextActionsProvider
+          addAgentAt={(point, groupId) => onBlankDoubleClick?.(point.x, point.y, groupId)}
+          openTerminal={onOpenTerminal}
+        >
+        <Tldraw
         persistenceKey={BOARD_PERSIST_KEY}
         shapeUtils={BOARD_SHAPE_UTILS}
         components={{
           ...BOARD_COMPONENTS,
-          InFrontOfTheCanvas: () => <CanvasOverlays client={terminalClient} search={search} />,
+          StylePanel: stylePanelOpen ? DefaultStylePanel : null,
+          InFrontOfTheCanvas: () => (
+            <CanvasOverlays
+              tasks={tasks}
+              client={terminalClient}
+              search={search}
+              stylePanelOpen={stylePanelOpen}
+              onToggleStylePanel={() => setStylePanelOpen((open) => !open)}
+              onOpenTerminal={onOpenTerminal}
+              pluginRuntime={pluginRuntime}
+            />
+          ),
         }}
         overrides={BOARD_OVERRIDES}
         themes={BOARD_THEMES}
@@ -340,61 +635,28 @@ export default function EvidenceBoard({
           });
           editor.updateInstanceState({ isGridMode: true });
           editor.updateDocumentSettings({ gridSize: 8 });
-          (window as unknown as { __boardEditor?: Editor }).__boardEditor = editor;
-          let syncFrame = 0;
-          const syncStore = () => {
-            if (syncFrame) return;
-            syncFrame = requestAnimationFrame(() => {
-              syncFrame = 0;
-              const next = readGroupsFromBoard(editor).map((g) => ({
-                ...g,
-                collapsed: false,
-              }));
-              useSpaceStore.getState().replaceGroups(next);
-            });
+          setBoardEditor(editor);
+          const stopGroups = listenBoardGroups(editor);
+          return () => {
+            stopGroups();
+            if (getBoardEditor() === editor) setBoardEditor(null);
           };
-          setBoardSpaceSyncReady(false);
-          editor.store.listen(() => {
-            if (!isBoardSpaceSyncReady()) return;
-            syncStore();
-          }, { scope: 'document' });
         }}
-      />
+          />
+        </BoardContextActionsProvider>
+      </BoardPluginRuntimeProvider>
+      {fileDropState.phase !== 'idle' && (
+        <div className="pointer-events-none absolute inset-0 z-[210000] flex items-center justify-center bg-black/55 backdrop-blur-[1px]">
+          <div className="border border-zinc-500 bg-zinc-950 px-6 py-5 text-center shadow-2xl">
+            <div className="pixel-font text-[10px] text-zinc-100">
+              {fileDropState.phase === 'importing'
+                ? t('board.importingFiles', { count: fileDropState.count })
+                : t('board.dropFiles', { count: fileDropState.count || 1 })}
+            </div>
+            <div className="mt-2 text-[11px] text-zinc-500">{t('board.dropFilesHint')}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
-
-
-
-/** 给 boardSync 用的 editor 句柄(白板唯一实例) */
-export function getBoardEditor(): Editor | null {
-  return (window as unknown as { __boardEditor?: Editor | null }).__boardEditor ?? null;
-}
-
-export function focusTaskShape(taskId: string) {
-  const editor = getBoardEditor();
-  if (!editor) return;
-  focusShape(editor, taskId);
-}
-
-export function createTaskCardShape(
-  taskId: string,
-  x: number,
-  y: number,
-  task?: Task,
-  parentId?: TLParentId
-) {
-  const editor = getBoardEditor();
-  if (!editor) return;
-  editor.createShapes([
-    {
-      id: makeShapeId(),
-      type: 'task-card',
-      x,
-      y,
-      ...(parentId ? { parentId } : {}),
-      props: taskToCardProps(task, taskId),
-    },
-  ]);
-  if (parentId) expandFrameToChildren(editor, parentId as TLShapeId);
 }

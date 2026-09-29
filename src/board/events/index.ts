@@ -1,6 +1,8 @@
 export {
+  enterSelectedShapeEditAfterClick,
   enterShapeEdit,
   exitShapeEdit,
+  handleExitedTerminalDoubleClick,
   handleShapeDoubleClick,
   isolateEvent,
   isolateWheel,

@@ -1,11 +1,12 @@
 import type * as React from 'react';
 import type { Task } from '@/types';
-import { formatRelativeTime } from '@/i18n';
 import AgentMark from '@/components/AgentMark';
 import BloubStatusIcon from '@/components/BloubStatusIcon';
 import ModelMark from '@/components/ModelMark';
 import StatusLamps from '@/components/StatusLamps';
+import TokenCount from '@/components/TokenCount';
 import { useAgentPhase } from '@/board/useAgentPhase';
+import { isRunningPhase } from '@/lib/boardStatus';
 
 export interface BoardPinCardProps {
   task: Task;
@@ -37,7 +38,7 @@ export default function BoardPinCard({
   groupId,
 }: BoardPinCardProps) {
   const card = useAgentPhase(task.id, task.status);
-  const live = card.active;
+  const live = isRunningPhase(card.task);
 
   return (
     <div
@@ -96,7 +97,7 @@ export default function BoardPinCard({
         <span className="truncate">{task.project}</span>
         <span>·</span>
         <ModelMark model={task.model} provider={task.provider} />
-        <span>· {task.messageCount}条 · {formatRelativeTime(task.lastActivity)}</span>
+        <TokenCount value={task.tokenCount} />
       </div>
 
       {/* 底部提示 */}

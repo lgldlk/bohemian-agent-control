@@ -1,17 +1,16 @@
-import { useLayoutEffect } from 'react';
+import { useLayoutEffect, useState, type MouseEvent } from 'react';
 import { HTMLContainer, Rectangle2d, ShapeUtil, T, createShapePropsMigrationIds, createShapePropsMigrationSequence, resizeBox, useEditor, type IndexKey, type JsonObject, type TLResizeInfo, type TLShapeId, type TLParentId } from 'tldraw';
-import { BellRing, SquareTerminal } from 'lucide-react';
+import { SquareTerminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { formatRelativeTime } from '@/i18n';
 import type { Task } from '@/types';
 import AgentMark from '@/components/AgentMark';
 import BloubStatusIcon from '@/components/BloubStatusIcon';
 import ModelMark from '@/components/ModelMark';
 import { handleShapeDoubleClick, useTaskCardEvents } from './events';
-import { useBoardTaskAttention } from '@/board/terminalActivity';
 import { useAgentPhase } from '@/board/useAgentPhase';
-import { isActivePhase } from '@/lib/boardStatus';
+import { isRunningPhase } from '@/lib/boardStatus';
 import StatusLamps from '@/components/StatusLamps';
+import TokenCount from '@/components/TokenCount';
 import '@/styles/pixel.css';
 
 const TASK_CARD_TYPE = 'task-card' as const;
@@ -30,7 +29,9 @@ export type TaskCardShapeProps = {
   model: string;
   provider: string;
   agentKind: string;
+  customTitle: string;
   messageCount: number;
+  tokenCount: number;
   lastActivity: number;
 };
 
@@ -67,7 +68,9 @@ export function taskToCardProps(task: Task | undefined, taskId: string): TaskCar
     model: task?.model ?? '',
     provider: task?.provider ?? '',
     agentKind: task?.agentKind ?? '',
+    customTitle: '',
     messageCount: task?.messageCount ?? 0,
+    tokenCount: task?.tokenCount ?? 0,
     lastActivity: task ? +new Date(task.lastActivity) : 0,
   };
 }
@@ -80,13 +83,17 @@ export function cardPropsChanged(a: TaskCardShapeProps, b: TaskCardShapeProps): 
     a.model !== b.model ||
     a.provider !== b.provider ||
     a.agentKind !== b.agentKind ||
+    a.customTitle !== b.customTitle ||
     a.messageCount !== b.messageCount ||
+    a.tokenCount !== b.tokenCount ||
     a.lastActivity !== b.lastActivity
   );
 }
 
 const taskCardVersions = createShapePropsMigrationIds('task-card', {
   AddAgentKind: 1,
+  AddTokenCount: 2,
+  AddCustomTitle: 3,
 });
 
 export class TaskCardShapeUtil extends ShapeUtil<TaskCardShape> {
@@ -101,7 +108,9 @@ export class TaskCardShapeUtil extends ShapeUtil<TaskCardShape> {
     model: T.string,
     provider: T.string,
     agentKind: T.string,
+    customTitle: T.string,
     messageCount: T.number,
+    tokenCount: T.number,
     lastActivity: T.number,
   };
   static override migrations = createShapePropsMigrationSequence({
@@ -110,6 +119,16 @@ export class TaskCardShapeUtil extends ShapeUtil<TaskCardShape> {
         id: taskCardVersions.AddAgentKind,
         up: (props) => ({ ...props, agentKind: props.agentKind ?? '' }),
         down: ({ agentKind: _agentKind, ...props }) => props,
+      },
+      {
+        id: taskCardVersions.AddTokenCount,
+        up: (props) => ({ ...props, tokenCount: props.tokenCount ?? 0 }),
+        down: ({ tokenCount: _tokenCount, ...props }) => props,
+      },
+      {
+        id: taskCardVersions.AddCustomTitle,
+        up: (props) => ({ ...props, customTitle: props.customTitle ?? '' }),
+        down: ({ customTitle: _customTitle, ...props }) => props,
       },
     ],
   });
@@ -146,7 +165,9 @@ export class TaskCardShapeUtil extends ShapeUtil<TaskCardShape> {
       model: '',
       provider: '',
       agentKind: '',
+      customTitle: '',
       messageCount: 0,
+      tokenCount: 0,
       lastActivity: 0,
     };
   }
@@ -184,21 +205,32 @@ function TaskCardBody({ shape }: { shape: TaskCardShape }) {
   const editor = useEditor();
   const { t } = useTranslation();
   const { isolate, onOpenClick, onOpenDoubleClick } = useTaskCardEvents(shape.id, shape.props.taskId);
-  const { name, status, project, model, provider, agentKind, messageCount, lastActivity, taskId } =
+  const { name, status, project, model, provider, agentKind, customTitle, tokenCount, taskId } =
     shape.props;
-  const attention = useBoardTaskAttention(taskId);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(customTitle || name || '');
   const card = useAgentPhase(taskId, status);
   const shownStatus = card.task;
-  const title = name || t('board.loadingTitle');
-  const rest = [
-    t('board.messages', { count: messageCount }),
-    lastActivity
-      ? formatRelativeTime(lastActivity)
-      : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  const title = customTitle || name || t('board.loadingTitle');
 
+  const commitTitle = () => {
+    const next = titleDraft.trim();
+    if (next !== (customTitle || '')) {
+      editor.updateShapes([{
+        id: shape.id,
+        type: 'task-card',
+        props: { customTitle: next },
+      }]);
+    }
+    setEditingTitle(false);
+  };
+
+  const startTitleEdit = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setTitleDraft(customTitle || name || '');
+    setEditingTitle(true);
+  };
   useLayoutEffect(() => {
     if (Math.abs(shape.props.h - TASK_CARD_H) > 1) {
       editor.updateShapes([{ id: shape.id, type: 'task-card', props: { h: TASK_CARD_H } }]);
@@ -215,7 +247,7 @@ function TaskCardBody({ shape }: { shape: TaskCardShape }) {
         isolation: 'isolate',
       }}
     >
-      <div className={`tl-task-card${isActivePhase(shownStatus) ? ' is-run' : ''}`}>
+      <div className={`tl-task-card${isRunningPhase(shownStatus) ? ' is-run' : ''}`}>
         <div className="tl-task-card__bot">
           <BloubStatusIcon status={shownStatus} size={TASK_CARD_ICON} paper="#16161c" />
           <AgentMark kind={agentKind} className="tl-task-card__agent" />
@@ -242,14 +274,40 @@ function TaskCardBody({ shape }: { shape: TaskCardShape }) {
               </button>
             )}
           </div>
-          <div className="tl-task-card__title" title={title}>
-            {title}
-          </div>
+          {editingTitle ? (
+            <input
+              autoFocus
+              value={titleDraft}
+              onChange={(event) => setTitleDraft(event.target.value)}
+              onBlur={commitTitle}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  commitTitle();
+                } else if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setEditingTitle(false);
+                }
+              }}
+              className="tl-task-card__title-input"
+              aria-label={t('board.renameTitle')}
+            />
+          ) : (
+            <div
+              className="tl-task-card__title"
+              title={title}
+              onDoubleClick={startTitleEdit}
+            >
+              {title}
+            </div>
+          )}
           <div className="tl-task-card__meta">
             <StatusLamps status={card} />
-            {shownStatus !== 'deleted' && attention && <span title={t('cards.needsAttention')}><BellRing className="tl-task-card__attention" size={12} /></span>}
             {shownStatus !== 'deleted' && <ModelMark model={model} provider={provider} />}
-            {rest ? <span className="tl-task-card__meta-rest">· {rest}</span> : null}
+            <TokenCount value={tokenCount || undefined} />
           </div>
         </div>
       </div>

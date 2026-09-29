@@ -9,6 +9,45 @@ const MODE_SEQUENCES: ReadonlyArray<readonly [string, TerminalBufferMode]> = [
   ['\u001b[?47l', 'normal'],
 ];
 
+/**
+ * Keep a bounded terminal transcript without starting in the middle of an
+ * escape sequence or a UTF-16 surrogate pair. A reset prefix makes the
+ * truncated tail deterministic when style state came from bytes we dropped.
+ */
+export function truncateTerminalTail(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  let start = Math.max(0, value.length - Math.max(1, maxChars));
+  const newline = value.indexOf('\n', start);
+  if (newline >= 0 && newline + 1 < value.length) start = newline + 1;
+
+  const previous = value.lastIndexOf('\u001b', start);
+  if (previous >= 0 && previous < start) {
+    const marker = value[previous + 1];
+    if (marker === '[' || marker === ']' || marker === 'P' || marker === '^' || marker === '_') {
+      let end = -1;
+      if (marker === '[') {
+        for (let index = previous + 2; index < value.length; index += 1) {
+          const code = value.charCodeAt(index);
+          if (code >= 0x40 && code <= 0x7e) {
+            end = index + 1;
+            break;
+          }
+        }
+      } else {
+        const bel = value.indexOf('\u0007', previous + 2);
+        const st = value.indexOf('\u001b\\', previous + 2);
+        end = bel >= 0 && (st < 0 || bel < st) ? bel + 1 : st >= 0 ? st + 2 : -1;
+      }
+      if (end > start) start = end;
+    }
+  }
+  if (start > 0 && start < value.length) {
+    const code = value.charCodeAt(start);
+    if (code >= 0xdc00 && code <= 0xdfff) start += 1;
+  }
+  return `\u001b[0m${value.slice(start)}`;
+}
+
 export interface TerminalBufferChunk {
   normal: string;
   alternate: string;
@@ -56,11 +95,11 @@ export function createTerminalBufferModel(initial: TerminalBufferMode = 'normal'
         index = escape + 1;
       }
 
-      normalHistory = `${normalHistory}${normal}`.slice(-maxChars);
+      normalHistory = truncateTerminalTail(`${normalHistory}${normal}`, maxChars);
       if (alternate.includes('\u001b[?1049h') || alternate.includes('\u001b[?1047h') || alternate.includes('\u001b[?47h')) {
-        alternateFrame = alternate.slice(-maxChars);
+        alternateFrame = truncateTerminalTail(alternate, maxChars);
       } else if (alternate) {
-        alternateFrame = `${alternateFrame}${alternate}`.slice(-maxChars);
+        alternateFrame = truncateTerminalTail(`${alternateFrame}${alternate}`, maxChars);
       }
       return { normal, alternate, mode };
     },

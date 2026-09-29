@@ -14,6 +14,7 @@ export interface TerminalServerOptions {
   token?: string;
   allowedOrigins?: readonly string[];
   enableAgentHooks?: boolean;
+  enableProviderHooks?: boolean;
 }
 
 /**
@@ -36,7 +37,7 @@ export function startTerminalServer(options: TerminalServerOptions = {}): {
     hookWsUrl: `ws://${wsHost}:${wsPort}`,
     hookToken: token,
     enableAgentHooks: options.enableAgentHooks,
-  });
+    enableProviderHooks: options.enableProviderHooks,  });
   const wsServer = new TerminalWebSocketServer({
     port: wsPort,
     host: wsHost,

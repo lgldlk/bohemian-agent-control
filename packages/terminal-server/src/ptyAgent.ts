@@ -48,31 +48,46 @@ function tmuxSet(command: string, socket: string | undefined, args: string[]): v
 
 /**
  * Private tmux server for board terminals only.
- * Status off avoids a geometry row. Alternate screen off keeps pane history on
- * the normal buffer so the outer terminal scrollbar can scroll it. smcup/rmcup
- * are removed so this server does not put xterm itself into the alternate buffer.
+ * Status off avoids a geometry row. Alternate screen stays on: a TUI paints
+ * xterm's alternate buffer, matching Orca. Forcing it off makes tmux emulate
+ * that paint on the normal buffer, so a cursor-addressed row ending in CR LF
+ * scrolls into history and leaves a blank gap or stale cells.
+ * `terminal-overrides` is unset because an older server cleared smcup/rmcup.
+ * Extended keys stay on so Pi/Claude/Codex Shift+Enter and Super+arrows
+ * survive the tmux client instead of collapsing to Enter or vanishing.
  */
+const TMUX_GLOBAL_CHROME: string[][] = [
+  ['set-option', '-g', 'history-limit', '100000'],
+  ['set-option', '-gu', 'terminal-overrides'],
+  ['set-option', '-g', 'alternate-screen', 'on'],
+  ['set-option', '-g', 'status', 'off'],
+  ['set-option', '-g', 'extended-keys', 'on'],
+  ['set-option', '-g', 'extended-keys-format', 'csi-u'],
+  ['set-option', '-as', 'terminal-features', 'xterm*:extkeys'],
+];
+
+export function tmuxBoardChromeArgs(session?: string): string[][] {
+  if (!session) return TMUX_GLOBAL_CHROME.map((args) => [...args]);
+  return [
+    ...TMUX_GLOBAL_CHROME.map((args) => [...args]),
+    ['set-option', '-t', session, 'status', 'off'],
+    ['set-option', '-t', session, 'alternate-screen', 'on'],
+  ];
+}
+
 export function hideTmuxStatus(command = process.env.TMUX_COMMAND || 'tmux', socket?: string, session?: string): void {
-  const setOff = (target?: string) => {
-    const args = target
-      ? ['set-option', '-t', target, 'status', 'off']
-      : ['set-option', '-g', 'status', 'off'];
-    tmuxSet(command, socket, args);
+  const apply = (target?: string) => {
+    for (const args of tmuxBoardChromeArgs(target)) tmuxSet(command, socket, args);
   };
-  tmuxSet(command, socket, ['set-option', '-g', 'history-limit', '100000']);
-  tmuxSet(command, socket, ['set-option', '-g', 'alternate-screen', 'off']);
-  tmuxSet(command, socket, ['set-option', '-g', 'terminal-overrides', ',xterm*:smcup@:rmcup@']);
-  setOff();
   if (session) {
-    setOff(session);
-    tmuxSet(command, socket, ['set-option', '-t', session, 'alternate-screen', 'off']);
+    apply(session);
     return;
   }
+  apply();
   try {
     const listed = spawnSync(command, tmuxArgs(socket, ['list-sessions', '-F', '#{session_name}']), { encoding: 'utf8' });
     for (const name of String(listed.stdout ?? '').split('\n').map((line) => line.trim()).filter(Boolean)) {
-      setOff(name);
-      tmuxSet(command, socket, ['set-option', '-t', name, 'alternate-screen', 'off']);
+      for (const args of tmuxBoardChromeArgs(name).slice(TMUX_GLOBAL_CHROME.length)) tmuxSet(command, socket, args);
     }
   } catch {
     /* no server yet */
@@ -132,63 +147,6 @@ async function scanBindings(): Promise<Map<number, string>> {
     return byShell;
   }
   return byShell;
-}
-
-export const PI_LAUNCH_MATCH_WINDOW_MS = 6 * 60 * 60 * 1000;
-
-export interface PiSessionHeader {
-  id: string;
-  startedAt: number;
-}
-
-/** The session created by this PTY, not a later sibling and not the newest file mtime. */
-export function selectPiLaunchSession(
-  sessions: readonly PiSessionHeader[],
-  createdAt: number,
-  claimed?: ReadonlySet<string>,
-): string | undefined {
-  return sessions
-    .filter((session) =>
-      !claimed?.has(session.id) &&
-      session.startedAt >= createdAt - 5_000 &&
-      session.startedAt <= createdAt + PI_LAUNCH_MATCH_WINDOW_MS,
-    )
-    .sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id))[0]?.id;
-}
-
-export async function listPiSessionHeaders(cwd: string): Promise<PiSessionHeader[]> {
-  if (!cwd) return [];
-  const root = path.join(process.env.HOME || '', '.pi', 'agent', 'sessions', `-${cwd.replaceAll('/', '-')}--`);
-  try {
-    const entries = await fs.readdir(root, { withFileTypes: true });
-    const headers: PiSessionHeader[] = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
-      const header = await readPiSessionHeader(path.join(root, entry.name));
-      if (header?.cwd === cwd) headers.push({ id: header.id, startedAt: header.startedAt });
-    }
-    return headers;
-  } catch {
-    return [];
-  }
-}
-
-async function readPiSessionHeader(file: string): Promise<{ id: string; cwd: string; startedAt: number } | undefined> {
-  const handle = await fs.open(file, 'r');
-  try {
-    const buffer = Buffer.alloc(1024);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const line = buffer.subarray(0, bytesRead).toString('utf8').split('\n', 1)[0];
-    if (!line) return undefined;
-    const header = JSON.parse(line) as { type?: string; id?: string; cwd?: string; timestamp?: string };
-    const startedAt = header.timestamp ? Date.parse(header.timestamp) : Number.NaN;
-    if (header.type !== 'session' || !header.id || !header.cwd || !Number.isFinite(startedAt)) return undefined;
-    return { id: header.id, cwd: header.cwd, startedAt };
-  } catch {
-    return undefined;
-  } finally {
-    await handle.close();
-  }
 }
 
 function nearestNonAgentAncestor(start: number, byPid: Map<number, Proc>): number | undefined {

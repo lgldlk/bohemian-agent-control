@@ -21,19 +21,31 @@ import {
   type TerminalSearchMatch,
   type TerminalSnapshot,
 } from '@bohemian/terminal-protocol';
-import { createTerminalBufferModel, type TerminalBufferModel } from './terminalScreenMode';
-import { writePiStatusExtension } from './piStatusExtension';
+import {
+  createTerminalBufferModel,
+  truncateTerminalTail,
+  type TerminalBufferModel,
+} from './terminalScreenMode';
+import { writePiStatusExtension } from './agents/pi/statusExtension';
+import { prepareProviderHookRuntime, type ProviderHookRuntime } from './agents/hookRuntime';
+import { listClaudeSessionHeaders } from './agents/claude/sessions';
+import { syncClaudeSessions } from './agents/claude/sync';
+import { listCodexSessionHeaders } from './agents/codex/sessions';
+import { syncCodexSessions } from './agents/codex/sync';
+import { journalTurnUpdate, screenTurnUpdate } from './agents/turnUpdate';
+import { listPiSessionHeaders } from './agents/pi/sessions';
+import { type TurnCursor } from './agents/journal';
+import { providerResumeCommand, providerStartupCommand } from './agents/startupCommand';
+import { selectLaunchSession, type SessionHeader } from './agents/sessionMatch';
+import { applySessionIdentity, providerStatusSessionAction } from './agents/sessionIdentity';
 import {
   agentSessionIdForShell,
   hasTmuxSession,
   hideTmuxStatus,
   killPtyTree,
   killTmuxSession,
-  listPiSessionHeaders,
-  selectPiLaunchSession,
   tmuxAvailable,
   tmuxName,
-  type PiSessionHeader,
 } from './ptyAgent';
 
 export interface PTYManagerOptions {
@@ -47,6 +59,7 @@ export interface PTYManagerOptions {
   hookToken?: string;
   /** Install provider bridges into the terminal server runtime, not the user's home. */
   enableAgentHooks?: boolean;
+  enableProviderHooks?: boolean;
 }
 
 export interface PTYSession {
@@ -74,6 +87,12 @@ export interface PTYSession {
   parseOscTitle: (chunk: string) => string[];
   parseOscStatus: (chunk: string) => { cleanData: string; payloads: ParsedAgentStatus[] };
   commandBuffer: CommandBuffer;
+  codexTurn?: TurnCursor;
+  codexWatch?: fs.FSWatcher;
+  claudeTurn?: TurnCursor;
+  claudeWatch?: fs.FSWatcher;
+  piTurn?: TurnCursor;
+  piWatch?: fs.FSWatcher;
   tmuxSession?: string;
   persistent: boolean;
   bufferMode: TerminalBufferModel;
@@ -98,6 +117,7 @@ export class PTYManager {
   private readonly maxSessions: number;
   private readonly maxScrollbackChars: number;
   private readonly maxPendingOutputChars: number;
+  private readonly stateLockPath: string;
   private readonly agentTimer: NodeJS.Timeout;
   private readonly persistentSessions: boolean;
   private readonly tmuxCommand: string;
@@ -105,10 +125,12 @@ export class PTYManager {
   private readonly hookWsUrl?: string;
   private readonly hookToken?: string;
   private readonly piStatusExtensionPath?: string;
+  private readonly providerHookRuntime?: ProviderHookRuntime;
   private disposing = false;
 
   constructor(options: PTYManagerOptions = {}) {
     this.stateDir = options.stateDir ?? path.join(os.homedir(), '.bohemian-agent-control', 'terminals');
+    this.stateLockPath = path.join(this.stateDir, '.server.lock');
     this.maxSessions = options.maxSessions ?? 50;
     this.maxScrollbackChars = options.maxScrollbackChars ?? 1_000_000;
     this.maxPendingOutputChars = Math.min(this.maxScrollbackChars, 64_000);
@@ -116,6 +138,8 @@ export class PTYManager {
     this.tmuxSocket = path.join(this.stateDir, '.tmux.sock');
     this.hookWsUrl = options.hookWsUrl;
     this.hookToken = options.hookToken;
+    fs.mkdirSync(this.stateDir, { recursive: true, mode: 0o700 });
+    this.acquireStateLock();
     if (options.enableAgentHooks !== false) {
       try {
         this.piStatusExtensionPath = writePiStatusExtension(path.join(this.stateDir, 'agent-hooks', 'pi'));
@@ -123,11 +147,17 @@ export class PTYManager {
         console.warn(`[PTY] ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    if (options.enableProviderHooks !== false && options.enableAgentHooks !== false) {
+      try {
+        this.providerHookRuntime = prepareProviderHookRuntime(this.stateDir, process.execPath);
+      } catch (error) {
+        console.warn(`[PTY] Provider hook runtime unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     this.persistentSessions = options.persistentSessions ?? tmuxAvailable(this.tmuxCommand, this.tmuxSocket);
     if (this.persistentSessions && !tmuxAvailable(this.tmuxCommand, this.tmuxSocket)) {
       console.warn(`[PTY] tmux not found; terminal processes cannot be reattached after a server restart`);
     }
-    fs.mkdirSync(this.stateDir, { recursive: true, mode: 0o700 });
     if (this.persistentSessions) hideTmuxStatus(this.tmuxCommand, this.tmuxSocket);
     this.restoreArchivedSessions();
     this.restoreLiveSessions();
@@ -212,12 +242,33 @@ export class PTYManager {
       if (!session.tmuxSession) void killPtyTree(pid);
     }
     if (session.tmuxSession) killTmuxSession(session.tmuxSession, this.tmuxCommand, this.tmuxSocket);
+    const boundSessionId = session.info.agentSessionId
+      || (session.info.nodeId
+        && !session.info.nodeId.startsWith('pending-')
+        && session.info.nodeId !== session.info.launchId
+        ? session.info.nodeId
+        : undefined);
+    const resumeCommand = providerResumeCommand(session.info.agentKind, boundSessionId);
+    if (resumeCommand) {
+      session.info.startupCommand = resumeCommand;
+      session.info.startupCommandDelivery ??= 'shell-ready';
+      session.info.startupStatus = 'pending';
+    }
     this.appendScrollback(session, '\r\n\x1b[90m--- terminal restarted ---\x1b[0m\r\n');
     session.info.status = 'starting';
     session.info.incarnationId = crypto.randomUUID();
     session.info.agentStatus = undefined;
     session.info.agentDetail = undefined;
     session.info.agentSessionId = undefined;
+    session.codexWatch?.close();
+    session.codexWatch = undefined;
+    session.codexTurn = undefined;
+    session.claudeWatch?.close();
+    session.claudeWatch = undefined;
+    session.claudeTurn = undefined;
+    session.piWatch?.close();
+    session.piWatch = undefined;
+    session.piTurn = undefined;
     session.inFlightBytes = 0;
     session.lastAckedSequence = session.sequence;
     delete session.info.exitCode;
@@ -235,9 +286,19 @@ export class PTYManager {
     const startupArgs = session.info.startupCommand && !restoring
       ? startupShellArgs(
           session.info.shell,
-          providerStartupCommand(session, session.info.startupCommand, this.piStatusExtensionPath),
+          providerStartupCommand(session.info.agentKind, session.info.startupCommand, {
+            piExtensionPath: this.piStatusExtensionPath,
+            claudeSettingsPath: this.providerHookRuntime?.claudeSettingsPath,
+            codexHomePath: this.providerHookRuntime?.codexHomePath,
+          }),
           session.info.startupCommandDelivery,
-          session.info.launchToken,
+          {
+            BOHEMIAN_TERMINAL_ID: session.id,
+            ...(session.info.launchToken ? { BOHEMIAN_AGENT_LAUNCH_TOKEN: session.info.launchToken } : {}),
+            ...(session.info.agentKind ? { BOHEMIAN_AGENT_KIND: session.info.agentKind } : {}),
+            ...(this.hookWsUrl ? { BOHEMIAN_TERMINAL_WS_URL: this.hookWsUrl } : {}),
+            ...(this.hookToken ? { BOHEMIAN_TERMINAL_TOKEN: this.hookToken } : {}),
+          },
         )
       : args;
     const command = session.persistent && session.tmuxSession
@@ -251,7 +312,11 @@ export class PTYManager {
       env: {
         ...process.env,
         ...env,
+        ...(session.info.agentKind === 'codex' && this.providerHookRuntime?.codexHomePath
+          ? { CODEX_HOME: this.providerHookRuntime.codexHomePath }
+          : {}),
         BOHEMIAN_TERMINAL_ID: session.id,
+        ...(session.info.agentKind ? { BOHEMIAN_AGENT_KIND: session.info.agentKind } : {}),
         ...(session.info.launchToken ? { BOHEMIAN_AGENT_LAUNCH_TOKEN: session.info.launchToken } : {}),
         ...(this.hookWsUrl ? { BOHEMIAN_TERMINAL_WS_URL: this.hookWsUrl } : {}),
         ...(this.hookToken ? { BOHEMIAN_TERMINAL_TOKEN: this.hookToken } : {}),
@@ -261,7 +326,10 @@ export class PTYManager {
     });
     session.process = processHandle;
     session.info.pid = processHandle.pid;
-    if (session.tmuxSession) hideTmuxStatus(this.tmuxCommand, this.tmuxSocket, session.tmuxSession);
+    // New sessions inherit the board-wide tmux defaults applied in the
+    // constructor. Re-running the full tmux setup here starts several
+    // synchronous child processes for every blank terminal and delays the
+    // create RPC before the UI can even mount the terminal.
     session.info.status = 'running';
     if (session.info.startupCommand && !restoring) session.info.startupStatus = 'delivered';
     session.info.updatedAt = Date.now();
@@ -306,13 +374,24 @@ export class PTYManager {
     const previousMode = session.bufferMode.getMode();
     const bufferChunk = session.bufferMode.feed(processed.cleanData);
     if (bufferChunk.normal) {
-      session.normalScrollback = `${session.normalScrollback}${bufferChunk.normal}`.slice(-this.maxScrollbackChars);
+      session.normalScrollback = truncateTerminalTail(
+        `${session.normalScrollback}${bufferChunk.normal}`,
+        this.maxScrollbackChars,
+      );
     }
     if (bufferChunk.mode === 'alternate') {
       if (previousMode === 'normal') session.alternateFrame = bufferChunk.alternate;
-      else session.alternateFrame = `${session.alternateFrame}${bufferChunk.alternate}`.slice(-this.maxScrollbackChars);
+      else {
+        session.alternateFrame = truncateTerminalTail(
+          `${session.alternateFrame}${bufferChunk.alternate}`,
+          this.maxScrollbackChars,
+        );
+      }
     } else if (previousMode === 'alternate' && bufferChunk.alternate) {
-      session.alternateFrame = `${session.alternateFrame}${bufferChunk.alternate}`.slice(-this.maxScrollbackChars);
+      session.alternateFrame = truncateTerminalTail(
+        `${session.alternateFrame}${bufferChunk.alternate}`,
+        this.maxScrollbackChars,
+      );
     }
     if (session.info.alternateScreen !== (bufferChunk.mode === 'alternate')) {
       session.info.alternateScreen = bufferChunk.mode === 'alternate';
@@ -321,9 +400,11 @@ export class PTYManager {
       this.emit({ type: 'updated', terminal: this.cloneInfo(session.info) });
     }
     for (const payload of processed.payloads) {
+      const action = providerStatusSessionAction(session.info.agentSessionId, payload);
+      if (action === 'stale') continue;
       const now = Date.now();
       session.info.agentDetail = { ...payload, origin: 'osc', observedAt: now };
-      if (payload.providerSessionId) this.adoptProviderSession(session, payload.providerSessionId);
+      if (action === 'adopt' && payload.providerSessionId) this.adoptProviderSession(session, payload.providerSessionId);
       session.info.agentStatus = payload.state === 'working' ? 'working' : payload.state === 'blocked' ? 'blocked' : 'idle';
       session.info.updatedAt = now;
       this.emit({ type: 'updated', terminal: this.cloneInfo(session.info) });
@@ -333,6 +414,7 @@ export class PTYManager {
       return;
     }
     this.observeAgentTitles(session, processed.cleanData);
+    this.observeProviderScreen(session, processed.cleanData);
     this.appendScrollback(session, processed.cleanData);
     const outputStart = session.outputOffset;
     session.outputOffset += Buffer.byteLength(processed.cleanData, 'utf8');
@@ -372,11 +454,25 @@ export class PTYManager {
     this.emit({ type: 'updated', terminal: this.cloneInfo(session.info) });
   }
 
+  private observeProviderScreen(session: PTYSession, data: string): void {
+    const next = screenTurnUpdate(session.info.agentKind, data, session.info.agentDetail);
+    if (!next || session.info.agentStatus === next.status) return;
+    session.info.agentDetail = {
+      state: next.state,
+      origin: 'screen',
+      observedAt: next.observedAt,
+      providerSessionId: session.info.agentSessionId,
+    };
+    session.info.agentStatus = next.status;
+    session.info.updatedAt = Date.now();
+    this.emit({ type: 'updated', terminal: this.cloneInfo(session.info) });
+  }
+
   private appendScrollback(session: PTYSession, data: string): void {
     session.sequence += 1;
     session.scrollback += data;
     if (session.scrollback.length > this.maxScrollbackChars) {
-      session.scrollback = session.scrollback.slice(-this.maxScrollbackChars);
+      session.scrollback = truncateTerminalTail(session.scrollback, this.maxScrollbackChars);
       session.truncated = true;
     }
     session.info.updatedAt = Date.now();
@@ -501,10 +597,12 @@ export class PTYManager {
   applyAgentStatus(id: TerminalId, launchToken: string, payload: ParsedAgentStatus): boolean {
     const session = this.sessions.get(id);
     if (!session || !session.info.launchToken || session.info.launchToken !== launchToken) return false;
+    const action = providerStatusSessionAction(session.info.agentSessionId, payload);
+    if (action === 'stale') return true;
     const now = Date.now();
     session.info.agentDetail = { ...payload, origin: 'hook', observedAt: now };
     session.info.agentStatus = payload.state === 'working' ? 'working' : payload.state === 'blocked' || payload.state === 'waiting' ? 'blocked' : 'idle';
-    if (payload.providerSessionId) this.adoptProviderSession(session, payload.providerSessionId);
+    if (action === 'adopt' && payload.providerSessionId) this.adoptProviderSession(session, payload.providerSessionId);
     session.info.updatedAt = now;
     this.schedulePersist(session);
     this.emit({ type: 'updated', terminal: this.cloneInfo(session.info) });
@@ -575,6 +673,9 @@ export class PTYManager {
     const session = this.sessions.get(id);
     if (!session) return false;
     session.closed = true;
+    session.codexWatch?.close();
+    session.claudeWatch?.close();
+    session.piWatch?.close();
     session.persistQueued = false;
     if (session.bufferTimer) clearTimeout(session.bufferTimer);
     if (session.persistTimer) clearTimeout(session.persistTimer);
@@ -684,16 +785,25 @@ export class PTYManager {
     };
     const metadataText = JSON.stringify(metadata);
     const scrollback = session.scrollback;
+    // Every writer gets its own temporary files. A shared `${meta}.tmp`
+    // allows two terminal-server processes to overwrite/rename each other's
+    // buffers, producing a valid JSON prefix followed by raw terminal output.
+    const suffix = `${process.pid}-${crypto.randomUUID()}`;
+    const temporaryMeta = `${files.meta}.${suffix}.tmp`;
+    const temporaryLog = `${files.log}.${suffix}.tmp`;
     let write: Promise<void>;
     write = (async () => {
-      await fsp.writeFile(`${files.meta}.tmp`, metadataText, { mode: 0o600 });
-      await fsp.rename(`${files.meta}.tmp`, files.meta);
-      await fsp.writeFile(files.log, scrollback, { mode: 0o600 });
+      await fsp.writeFile(temporaryMeta, metadataText, { mode: 0o600 });
+      await fsp.rename(temporaryMeta, files.meta);
+      await fsp.writeFile(temporaryLog, scrollback, { mode: 0o600 });
+      await fsp.rename(temporaryLog, files.log);
     })()
       .catch((error) => {
         console.warn(`[PTY] Failed to persist ${session.id}:`, error);
       })
       .finally(() => {
+        void fsp.rm(temporaryMeta, { force: true }).catch(() => {});
+        void fsp.rm(temporaryLog, { force: true }).catch(() => {});
         if (session.persistInFlight !== write) return;
         session.persistInFlight = null;
         if (session.persistQueued && !session.closed) {
@@ -715,7 +825,9 @@ export class PTYManager {
     for (const name of fs.readdirSync(this.stateDir)) {
       if (!name.endsWith('.json')) continue;
       try {
-        const metadata = JSON.parse(fs.readFileSync(path.join(this.stateDir, name), 'utf8')) as PersistedSession;
+        const raw = fs.readFileSync(path.join(this.stateDir, name), 'utf8');
+        const parsed = parsePersistedSession(raw);
+        const metadata = parsed.value;
         if (!metadata.info?.id) continue;
         const files = this.paths(metadata.info.id);
         const scrollback = fs.existsSync(files.log) ? fs.readFileSync(files.log, 'utf8') : '';
@@ -733,7 +845,7 @@ export class PTYManager {
         delete info.pid;
         const bufferMode = createTerminalBufferModel();
         bufferMode.feed(scrollback);
-        this.sessions.set(info.id, {
+        const session: PTYSession = {
           id: info.id,
           process: null,
           info,
@@ -752,7 +864,7 @@ export class PTYManager {
           inFlightBytes: 0,
           lastAckedSequence: 0,
           sequence: metadata.sequence ?? 0,
-          scrollback: scrollback.slice(-this.maxScrollbackChars),
+          scrollback: truncateTerminalTail(scrollback, this.maxScrollbackChars),
           truncated: metadata.truncated || scrollback.length > this.maxScrollbackChars,
           subscribers: new Set(),
           parseOscTitle: createOscTitleParser(),
@@ -765,7 +877,12 @@ export class PTYManager {
           bufferMode,
           normalScrollback: metadata.normalScrollback || bufferMode.getNormalHistory(),
           alternateFrame: metadata.alternateFrame || bufferMode.getAlternateFrame(),
-        });
+        };
+        this.sessions.set(info.id, session);
+        if (parsed.recovered) {
+          console.warn(`[PTY] Recovered terminal archive ${name}`);
+          this.schedulePersist(session);
+        }
       } catch (error) {
         console.warn(`[PTY] Ignoring corrupt terminal archive ${name}:`, error);
       }
@@ -787,48 +904,91 @@ export class PTYManager {
 
   private async refreshAgentBindings(): Promise<void> {
     const running = [...this.sessions.values()].filter((session) => session.info.status === 'running');
-    const cwdHeaders = new Map<string, PiSessionHeader[]>();
-    await Promise.all([...new Set(running.map((session) => session.info.cwd).filter(Boolean))].map(async (cwd) => {
-      cwdHeaders.set(cwd, await listPiSessionHeaders(cwd));
+    const piHeaders = new Map<string, SessionHeader[]>();
+    const codexHeaders = new Map<string, SessionHeader[]>();
+    const claudeHeaders = new Map<string, SessionHeader[]>();
+    const cwds = [...new Set(running.map((session) => session.info.cwd).filter(Boolean))];
+    await Promise.all(cwds.map(async (cwd) => {
+      const kinds = new Set(running.filter((session) => session.info.cwd === cwd).map((session) => session.info.agentKind));
+      if (kinds.has('pi')) piHeaders.set(cwd, await listPiSessionHeaders(cwd));
+      if (kinds.has('codex')) codexHeaders.set(cwd, await listCodexSessionHeaders(cwd));
+      if (kinds.has('claude-code')) claudeHeaders.set(cwd, await listClaudeSessionHeaders(cwd));
     }));
     const claimed = new Set<string>();
     const ordered = [...running].sort((a, b) => a.info.createdAt - b.info.createdAt);
     for (const session of ordered) {
+      const currentSessionId = session.info.agentSessionId;
+      // Process arguments and launch-time headers are fallback correlation only.
+      // After `/new` or `/resume`, they may still name the previous topic.
+      if (currentSessionId) {
+        claimed.add(currentSessionId);
+        continue;
+      }
+
       const launched = session.info.launchId?.startsWith('pending-') === true;
       let sessionId = await agentSessionIdForShell(session.info.pid);
-      if (!sessionId && session.info.agentKind === 'pi' && launched) {
-        sessionId = selectPiLaunchSession(cwdHeaders.get(session.info.cwd) ?? [], session.info.createdAt, claimed);
+      if (!sessionId && launched) {
+        const headers = session.info.agentKind === 'pi'
+          ? piHeaders
+          : session.info.agentKind === 'codex'
+            ? codexHeaders
+            : session.info.agentKind === 'claude-code'
+              ? claudeHeaders
+              : undefined;
+        if (headers) sessionId = selectLaunchSession(headers.get(session.info.cwd) ?? [], session.info.createdAt, claimed);
       }
       if (!sessionId) continue;
       claimed.add(sessionId);
-      if (!this.applyLaunchIdentity(session, sessionId, launched && session.info.agentKind === 'pi')) continue;
+      if (!this.applyLaunchIdentity(session, sessionId, launched && (session.info.agentKind === 'pi' || session.info.agentKind === 'codex' || session.info.agentKind === 'claude-code'))) continue;
       session.info.updatedAt = Date.now();
       this.schedulePersist(session);
       this.emit({ type: 'updated', terminal: this.cloneInfo(session.info) });
     }
+    const publish = (session: PTYSession, cursor: TurnCursor) => this.publishJournalTurn(session, cursor);
+    const open = this.sessions.values();
+    await syncCodexSessions(open, publish);
+    await syncClaudeSessions(open, publish);
+  }
+
+  private publishJournalTurn(session: PTYSession, cursor: TurnCursor): void {
+    const next = journalTurnUpdate(cursor, session.info.agentDetail);
+    if (!next) return;
+    session.info.agentDetail = {
+      state: next.state,
+      origin: 'journal',
+      observedAt: next.observedAt,
+      providerSessionId: session.info.agentSessionId,
+    };
+    session.info.agentStatus = next.status;
+    session.info.updatedAt = Date.now();
+    this.schedulePersist(session);
+    this.emit({ type: 'updated', terminal: this.cloneInfo(session.info) });
   }
 
   private adoptProviderSession(session: PTYSession, providerSessionId: string): void {
-    if (session.info.agentKind === 'pi' && session.info.agentSessionId && session.info.agentSessionId !== providerSessionId) return;
-    this.applyLaunchIdentity(session, providerSessionId, false);
+    this.applyLaunchIdentity(session, providerSessionId, true);
   }
 
   private applyLaunchIdentity(session: PTYSession, sessionId: string, forceNode: boolean): boolean {
-    let changed = false;
-    if (session.info.agentSessionId !== sessionId) {
-      session.info.agentSessionId = sessionId;
-      changed = true;
-    }
-    const nodeId = session.info.nodeId;
-    const unbound = !nodeId || nodeId.startsWith('pending-') || nodeId === session.info.launchId;
-    if ((unbound || forceNode) && nodeId !== sessionId) {
-      session.info.nodeId = sessionId;
-      changed = true;
-    }
-    return changed;
+    const update = applySessionIdentity(session.info, sessionId, forceNode);
+    if (update.sessionChanged) this.resetAgentSessionTracking(session);
+    return update.changed;
+  }
+
+  private resetAgentSessionTracking(session: PTYSession): void {
+    session.codexWatch?.close();
+    session.codexWatch = undefined;
+    session.codexTurn = undefined;
+    session.claudeWatch?.close();
+    session.claudeWatch = undefined;
+    session.claudeTurn = undefined;
+    session.piWatch?.close();
+    session.piWatch = undefined;
+    session.piTurn = undefined;
   }
 
   async dispose(): Promise<void> {
+    if (this.disposing) return;
     this.disposing = true;
     clearInterval(this.agentTimer);
     const pending: Promise<void>[] = [];
@@ -858,22 +1018,58 @@ export class PTYManager {
     }
     await Promise.all(pending);
     this.eventSubscribers.clear();
+    this.releaseStateLock();
   }
-}
 
-function providerStartupCommand(session: PTYSession, command: string, piExtensionPath?: string): string {
-  if (session.info.agentKind !== 'pi' || !piExtensionPath) return command;
-  if (/\s--extension(?:\s|=)/.test(command)) return command;
-  // Launch commands are generated by the provider adapter (pi [--session ...]).
-  // Only inject into a plain Pi executable; arbitrary shell commands remain untouched.
-  return command.replace(/^(\s*(?:(?:env)\s+)?(?:pi|[^\s/]+\/pi))(?=\s|$)/, `$1 --extension ${quoteShell(piExtensionPath)}`);
+  private acquireStateLock(): void {
+    try {
+      const fd = fs.openSync(this.stateLockPath, 'wx', 0o600);
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: Date.now() }), 'utf8');
+      fs.closeSync(fd);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+
+    let owner: { pid?: number } = {};
+    try {
+      owner = JSON.parse(fs.readFileSync(this.stateLockPath, 'utf8')) as { pid?: number };
+    } catch {
+      // A crashed writer may have left an empty lock. It is safe to replace
+      // only when no live owner can be established.
+    }
+    if (owner.pid && isProcessAlive(owner.pid)) {
+      throw new Error(`Terminal state directory is already in use by PID ${owner.pid}`);
+    }
+    try {
+      fs.rmSync(this.stateLockPath, { force: true });
+      const fd = fs.openSync(this.stateLockPath, 'wx', 0o600);
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: Date.now() }), 'utf8');
+      fs.closeSync(fd);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        throw new Error('Terminal state directory is already in use');
+      }
+      throw error;
+    }
+  }
+
+  private releaseStateLock(): void {
+    try {
+      const owner = JSON.parse(fs.readFileSync(this.stateLockPath, 'utf8')) as { pid?: number };
+      if (owner.pid !== process.pid) return;
+    } catch {
+      // The lock may already have been removed after a forced shutdown.
+    }
+    try { fs.rmSync(this.stateLockPath, { force: true }); } catch { /* ignore */ }
+  }
 }
 
 function startupShellArgs(
   shell: string,
   command: string,
   delivery: TerminalInfo['startupCommandDelivery'],
-  launchToken?: string,
+  hookEnv: Record<string, string>,
 ): string[] {
   if (process.platform === 'win32' || /(?:cmd|powershell)/i.test(shell)) {
     return ['/d', '/s', '/c', command];
@@ -881,8 +1077,127 @@ function startupShellArgs(
   const marker = delivery === 'shell-ready'
     ? "printf '\\033]777;bohemian-shell-ready\\007'; "
     : '';
-  const token = launchToken ? `export BOHEMIAN_AGENT_LAUNCH_TOKEN=${quoteShell(launchToken)}; ` : '';
-  return ['-lc', `${marker}${token}exec ${command}`];
+  // tmux does not pass the PTY environment into the session. Pi reads these
+  // when its extension loads, so they have to be part of the exec command.
+  const exported = Object.entries(hookEnv)
+    .filter(([, value]) => value)
+    .map(([key, value]) => `export ${key}=${quoteShell(value)}; `)
+    .join('');
+  return ['-lc', `${marker}${exported}exec ${command}`];
+}
+
+function parsePersistedSession(raw: string): { value: PersistedSession; recovered: boolean } {
+  try {
+    return { value: JSON.parse(raw) as PersistedSession, recovered: false };
+  } catch (error) {
+    // Older concurrent writers could append terminal bytes after a complete
+    // metadata object. Recover the complete object instead of dropping the
+    // live tmux-backed terminal from the inventory.
+    const end = completeJsonObjectEnd(raw);
+    if (end !== null) {
+      try {
+        return {
+          value: JSON.parse(raw.slice(0, end)) as PersistedSession,
+          recovered: raw.slice(end).trim().length > 0,
+        };
+      } catch {
+        // Continue with escape repair below. A truncated `\uXXXX` sequence
+        // inside the persisted scrollback can prevent the prefix from parsing.
+      }
+    }
+    const repaired = repairJsonEscapes(raw);
+    try {
+      return { value: JSON.parse(repaired) as PersistedSession, recovered: true };
+    } catch {
+      const repairedEnd = completeJsonObjectEnd(repaired);
+      if (repairedEnd === null) throw error;
+      return {
+        value: JSON.parse(repaired.slice(0, repairedEnd)) as PersistedSession,
+        recovered: true,
+      };
+    }
+  }
+}
+
+function repairJsonEscapes(raw: string): string {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (!inString) {
+      if (char === '"') inString = true;
+      result += char;
+      continue;
+    }
+    if (char === '"' && !escaped) {
+      inString = false;
+      result += char;
+      continue;
+    }
+    if (escaped) {
+      escaped = false;
+      result += char;
+      continue;
+    }
+    if (char !== '\\') {
+      result += char;
+      continue;
+    }
+    const next = raw[index + 1];
+    const unicode = raw.slice(index + 2, index + 6);
+    if (
+      next === '"' || next === '\\' || next === '/' ||
+      next === 'b' || next === 'f' || next === 'n' ||
+      next === 'r' || next === 't' ||
+      (next === 'u' && /^[0-9a-fA-F]{4}$/.test(unicode))
+    ) {
+      result += char;
+      escaped = true;
+      continue;
+    }
+    // Preserve the bytes as literal text by escaping the invalid slash.
+    result += '\\\\';
+  }
+  return result;
+}
+
+function completeJsonObjectEnd(raw: string): number | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      depth += 1;
+      continue;
+    }
+    if (char === '}' && depth > 0) {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return null;
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 function quoteShell(value: string): string {

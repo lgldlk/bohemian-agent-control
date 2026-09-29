@@ -7,6 +7,15 @@
 export * from '@/board/plugins/types';
 export * from '@/board/plugins/resourceTypes';
 export {
+  DEFAULT_RESOURCE_PERFORMANCE_SETTINGS,
+  RESOURCE_PERFORMANCE_PLUGIN_ID,
+  readResourcePerformanceSettings,
+  resourcePerformanceStorage,
+  shouldDeferResource,
+  useResourcePerformanceSettings,
+  writeResourcePerformanceSettings,
+} from './resourcePerformance';
+export {
   createBoardPluginSettingsStorage,
   subscribeBoardPluginSettings,
 } from '@/board/plugins/storage/settingsStorage';

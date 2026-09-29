@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { createTaskCardShape, focusTaskShape } from '@/board/EvidenceBoard';
+import { createTaskCardShape, focusTaskShape } from '@/board/boardEditor';
 import { useSpaceStore } from '@/space/spaceStore';
 import type { Task } from '@/types';
 

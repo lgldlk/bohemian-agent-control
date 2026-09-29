@@ -1,8 +1,13 @@
 import { lazy, Suspense, useState } from 'react';
-import { Search, Settings, X } from 'lucide-react';
+import { Languages, Search, Settings, SquareTerminal, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { setAppLanguage } from '@/i18n';
 import { PixelLogo } from '@/components/pixel/PixelLogo';
+import {
+  BoardPluginPageButtons,
+  BoardPluginTopbarButtons,
+} from '@/board/plugins/hosts/BoardPluginTopbarHost';
+import { closeBoardPluginPage, useActiveBoardPluginPageId } from '@/board/plugins/pluginStore';
 import type { View } from '@/hooks/useAppState';
 
 const TerminalSettingsModal = lazy(() => import('@/components/TerminalSettingsModal'));
@@ -10,19 +15,18 @@ const TerminalSettingsModal = lazy(() => import('@/components/TerminalSettingsMo
 interface BoardHeaderProps {
   taskCount: number;
   spaceCount: number;
-  lastUpdate: Date | null;
-  onRefresh: () => void;
   view: View;
   onViewChange: (v: View) => void;
   search: string;
   onSearch: (v: string) => void;
-  onNewTerminal: () => void;
+  onAddTerminal: () => void;
 }
 
 export default function BoardHeader(props: BoardHeaderProps) {
   const { t, i18n } = useTranslation();
   const zh = i18n.language.startsWith('zh');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const activePluginPageId = useActiveBoardPluginPageId();
 
   return (
     <header className="z-30 shrink-0 border-b border-zinc-800 bg-[#0a0a0d]/95 backdrop-blur">
@@ -31,21 +35,20 @@ export default function BoardHeader(props: BoardHeaderProps) {
           <PixelLogo />
           <p className="mt-0.5 text-xs tabular-nums text-zinc-500">
             {t('app.sessions', { count: props.taskCount })} · {t('app.boardCount', { count: props.spaceCount })}
-            {props.lastUpdate && (
-              <span> · {props.lastUpdate.toLocaleTimeString(zh ? 'zh-CN' : 'en-US')}</span>
-            )}
           </p>
         </div>
 
         {/* 视图:白板 / 卡片 */}
         <div className="flex gap-3">
-          <ViewButton active={props.view === 'board'} onClick={() => props.onViewChange('board')}>
+          <ViewButton active={props.view === 'board' && !activePluginPageId} onClick={() => { closeBoardPluginPage(); props.onViewChange('board'); }}>
             BOARD
           </ViewButton>
-          <ViewButton active={props.view === 'grid'} onClick={() => props.onViewChange('grid')}>
+          <ViewButton active={props.view === 'grid' && !activePluginPageId} onClick={() => { closeBoardPluginPage(); props.onViewChange('grid'); }}>
             CARDS
           </ViewButton>
+          <BoardPluginPageButtons onActivatePage={() => props.onViewChange('board')} />
         </div>
+        <BoardPluginTopbarButtons />
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
@@ -78,40 +81,24 @@ export default function BoardHeader(props: BoardHeaderProps) {
 
         <button
           type="button"
-          onClick={props.onNewTerminal}
-          title={t('app.newTerminal')}
-          className="px-btn px-btn-dark box-shadow-margin h-8 px-3 pixel-font text-[8px]"
+          onClick={() => { closeBoardPluginPage(); props.onAddTerminal(); }}
+          title={t('app.addTerminal')}
+          aria-label={t('app.addTerminal')}
+          className="px-btn px-btn-dark box-shadow-margin flex h-8 items-center gap-1 px-3 pixel-font text-[8px]"
         >
-          TERM
+          <SquareTerminal className="h-3 w-3" />
+          + TERM
         </button>
         <button
           type="button"
-          onClick={props.onRefresh}
-          title={t('app.sync')}
-          className="px-btn px-btn-dark box-shadow-margin h-8 px-3 pixel-font text-[8px]"
+          onClick={() => setAppLanguage(zh ? 'en' : 'zh-CN')}
+          title={zh ? t('app.switchToEnglish') : t('app.switchToChinese')}
+          aria-label={zh ? t('app.switchToEnglish') : t('app.switchToChinese')}
+          className="px-btn px-btn-dark box-shadow-margin flex h-8 items-center gap-1 px-2 pixel-font text-[8px]"
         >
-          SYNC
+          <Languages className="h-3 w-3" />
+          {zh ? t('app.langZh') : t('app.langEn')}
         </button>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={() => setAppLanguage('zh-CN')}
-            className={`px-btn box-shadow-margin h-8 px-2 pixel-font text-[8px] ${
-              zh ? 'px-btn-primary' : 'px-btn-dark'
-            }`}
-          >
-            {t('app.langZh')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setAppLanguage('en')}
-            className={`px-btn box-shadow-margin h-8 px-2 pixel-font text-[8px] ${
-              zh ? 'px-btn-dark' : 'px-btn-primary'
-            }`}
-          >
-            {t('app.langEn')}
-          </button>
-        </div>
       </div>
       {settingsOpen ? (
         <Suspense fallback={null}>

@@ -1,14 +1,13 @@
 import { Task } from '@/types';
-import { MessageSquare, Clock, X, BellRing } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import AgentMark from '@/components/AgentMark';
 import ModelMark from '@/components/ModelMark';
-import { formatRelativeTime } from '@/i18n';
 import { PixelCard } from '@/components/pixel/PixelCard';
 import BloubStatusIcon from '@/components/BloubStatusIcon';
-import { useBoardTaskAttention } from '@/board/terminalActivity';
 import { useAgentPhase } from '@/board/useAgentPhase';
 import StatusLamps from '@/components/StatusLamps';
+import TokenCount from '@/components/TokenCount';
 
 interface TaskCardProps {
   task: Task;
@@ -19,7 +18,6 @@ interface TaskCardProps {
 
 export default function TaskCard({ task, onSelect, changed, onRemove }: TaskCardProps) {
   const { t } = useTranslation();
-  const attention = useBoardTaskAttention(task.id);
   const status = useAgentPhase(task.id, task.status);
   return (
     <PixelCard
@@ -40,7 +38,6 @@ export default function TaskCard({ task, onSelect, changed, onRemove }: TaskCard
           <span className="text-zinc-600">·</span>
           <span className="min-w-0 truncate text-zinc-500">{task.project}</span>
           {changed && <span className="shrink-0 text-zinc-200">· {t('status.updated')}</span>}
-          {attention && <span title={t('cards.needsAttention')}><BellRing className="ml-auto h-3.5 w-3.5 shrink-0 animate-pulse text-amber-300" /></span>}
           {onRemove && (
             <span
               role="button"
@@ -71,14 +68,7 @@ export default function TaskCard({ task, onSelect, changed, onRemove }: TaskCard
           <span className="flex min-w-0 items-center">
             <ModelMark model={task.model} provider={task.provider} />
           </span>
-          <span className="flex items-center gap-1.5">
-            <MessageSquare className="h-3.5 w-3.5" />
-            {t('cards.messages', { count: task.messageCount })}
-          </span>
-          <span className="ml-auto flex min-w-0 items-center gap-1.5 truncate">
-            <Clock className="h-3.5 w-3.5 shrink-0" />
-            {formatRelativeTime(task.lastActivity)}
-          </span>
+          <TokenCount value={task.tokenCount} />
         </div>
       </button>
     </PixelCard>

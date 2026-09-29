@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import WatchGrid from '@/components/WatchGrid';
 import BoardHeader from '@/components/BoardHeader';
 import { useSpaceStore, spaceIdList } from '@/space/spaceStore';
@@ -12,10 +12,16 @@ import { useTerminalManagement } from '@/hooks/useTerminalManagement';
 import { useTranslation } from 'react-i18next';
 import { pendingToTask, useWorkspaceStore } from '@/workspace/workspaceStore';
 import type { Task } from '@/types';
+import { onResourceActivated } from '@/resources/resourceBus';
+const ResourceInspector = lazy(() => import('@/resources/ResourceInspector').then(({ ResourceInspector: Component }) => ({ default: Component })));
+import type { TerminalResourceRef } from '@bohemian/terminal-protocol';
 import '@/styles/pixel.css';
 
 export default function App() {
   const { t } = useTranslation();
+  const [resource, setResource] = useState<TerminalResourceRef | null>(null);
+
+  useEffect(() => onResourceActivated(setResource), []);
   const {
     view,
     setView,
@@ -24,6 +30,7 @@ export default function App() {
     addModalOpen,
     addPresetGroup,
     addMode,
+    addPoint,
     openAddModal,
     closeAddModal,
   } = useAppState();
@@ -31,6 +38,7 @@ export default function App() {
   const { tasks, error, lastUpdate, refresh, changedIds } = useTasks();
   const groups = useSpaceStore((s) => s.groups);
   const removeFromSpace = useSpaceStore((s) => s.removeFromSpace);
+  const createGroup = useSpaceStore((s) => s.createGroup);
   const spaceIds = useMemo(() => spaceIdList(groups), [groups]);
   const pending = useWorkspaceStore((s) => s.pending);
   const lastUsed = useWorkspaceStore((s) => s.lastUsed);
@@ -46,7 +54,7 @@ export default function App() {
     [byId, spaceIds],
   );
 
-  const { terminalClient, openTerminalForTask, createNewTerminal } = useTerminalManagement(
+  const { terminalClient, openTerminalForTask, addEmptyTerminal } = useTerminalManagement(
     mergedTasks,
     view,
     setView,
@@ -78,13 +86,11 @@ export default function App() {
       <BoardHeader
         taskCount={tasks.length}
         spaceCount={spaceTasks.length}
-        lastUpdate={lastUpdate}
-        onRefresh={refresh}
         view={view}
         onViewChange={setView}
         search={search}
         onSearch={setSearch}
-        onNewTerminal={createNewTerminal}
+        onAddTerminal={addEmptyTerminal}
       />
 
       <div className="flex min-h-0 flex-1">
@@ -101,7 +107,7 @@ export default function App() {
                 search={search}
                 terminalClient={terminalClient}
                 onOpenTerminal={openTerminalForTask}
-                onBlankDoubleClick={(groupId) => openAddModal(groupId, 'start')}
+                onBlankDoubleClick={(x, y, groupId) => openAddModal(groupId, 'start', { x, y })}
               />
             </Suspense>
           ) : (
@@ -124,6 +130,12 @@ export default function App() {
         <span className="text-xs text-zinc-600">{t('app.footer')}</span>
       </footer>
 
+      {resource ? (
+        <Suspense fallback={null}>
+          <ResourceInspector resource={resource} onClose={() => setResource(null)} />
+        </Suspense>
+      ) : null}
+
       {addModalOpen ? (
         <Suspense fallback={null}>
           <SpaceAddModal
@@ -133,8 +145,21 @@ export default function App() {
             mode={addMode}
             hintCwd={hintCwd}
             onClose={closeAddModal}
-            onStart={(cwd, agentKind) => {
-              startThread(cwd, addPresetGroup, agentKind);
+            onCreateGroup={(name) => {
+              const groupId = createGroup(name);
+              if (groupId && addPoint) {
+                void Promise.all([
+                  import('@/board/boardEditor'),
+                  import('@/board/groupFrameEditor'),
+                ]).then(([{ getBoardEditor }, { createNamedGroupFrameAtPoint }]) => {
+                  const editor = getBoardEditor();
+                  if (editor) createNamedGroupFrameAtPoint(editor, groupId, name.trim(), addPoint);
+                });
+              }
+              closeAddModal();
+            }}
+            onStart={(cwd, agentKind, groupId) => {
+              startThread(cwd, groupId, agentKind);
               closeAddModal();
             }}
           />

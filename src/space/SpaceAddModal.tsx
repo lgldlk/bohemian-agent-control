@@ -8,11 +8,13 @@ import AgentMark from '@/components/AgentMark';
 import BloubStatusIcon from '@/components/BloubStatusIcon';
 import ModelMark from '@/components/ModelMark';
 import { parseAgentKind, type AgentKindId } from '@/lib/agentBrand';
-import { formatRelativeTime } from '@/i18n';
 import { spaceIdList, useSpaceStore } from './spaceStore';
 import { useWorkspaceStore } from '@/workspace/workspaceStore';
 import { recentOrRunning, taskMatchesQuery } from '@/lib/taskSearch';
 import { useAgentPhase } from '@/board/useAgentPhase';
+import { isRunningPhase } from '@/lib/boardStatus';
+import TokenCount from '@/components/TokenCount';
+import { focusTaskShape } from '@/board/boardEditor';
 
 type Mode = 'pin' | 'start';
 type AgentTab = 'all' | AgentKindId;
@@ -33,7 +35,8 @@ interface SpaceAddModalProps {
   mode: Mode;
   hintCwd?: string;
   onClose: () => void;
-  onStart: (cwd: string, agentKind: AgentKindId) => void;
+  onCreateGroup: (name: string) => void;
+  onStart: (cwd: string, agentKind: AgentKindId, groupId?: string) => void;
 }
 
 interface WorkspaceRow {
@@ -50,6 +53,7 @@ export default function SpaceAddModal({
   mode,
   hintCwd,
   onClose,
+  onCreateGroup,
   onStart,
 }: SpaceAddModalProps) {
   const groups = useSpaceStore((s) => s.groups);
@@ -76,6 +80,8 @@ export default function SpaceAddModal({
   const [dirError, setDirError] = useState('');
   const [workspacesLoading, setWorkspacesLoading] = useState(false);
   const [browseLoading, setBrowseLoading] = useState(false);
+  const [groupNameOpen, setGroupNameOpen] = useState(false);
+  const [groupNameDraft, setGroupNameDraft] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -160,11 +166,19 @@ export default function SpaceAddModal({
     setCreating(false);
   };
 
+  const commitGroup = () => {
+    const name = groupNameDraft.trim();
+    if (!name) return;
+    onCreateGroup(name);
+    setGroupNameDraft('');
+    setGroupNameOpen(false);
+  };
+
   const startHere = () => {
     const cwd = cwdDraft.trim();
     if (!cwd || !agentKind) return;
     saveLastAgent(agentKind);
-    onStart(cwd, agentKind);
+    onStart(cwd, agentKind, targetGroup);
   };
 
   if (!open || typeof document === 'undefined') return null;
@@ -181,7 +195,7 @@ export default function SpaceAddModal({
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.15 }}
         onClick={(event) => event.stopPropagation()}
-        className="flex max-h-[84vh] w-full max-w-xl flex-col border border-zinc-700 bg-black"
+        className="relative flex max-h-[84vh] w-full max-w-xl flex-col border border-zinc-700 bg-black"
       >
         <div className="flex shrink-0 items-center gap-1 border-b border-zinc-800 px-2 py-2">
           <TabBtn active={tab === 'start'} onClick={() => setTab('start')}>
@@ -190,6 +204,17 @@ export default function SpaceAddModal({
           <TabBtn active={tab === 'pin'} onClick={() => setTab('pin')}>
             {t('add.existing')}
           </TabBtn>
+          <button
+            type="button"
+            onClick={() => {
+              setGroupNameDraft('');
+              setGroupNameOpen(true);
+            }}
+            title={t('add.addGroup')}
+            className="border border-zinc-700 px-2 py-1 text-[12px] text-zinc-300 hover:border-white hover:text-white"
+          >
+            + {t('add.addGroup')}
+          </button>
           <button
             type="button"
             onClick={onClose}
@@ -409,6 +434,7 @@ export default function SpaceAddModal({
                       added={inSpace.has(task.id)}
                       onPin={() => {
                         addToGroup(task.id, targetGroup);
+                        focusTaskShape(task.id);
                         onClose();
                       }}
                     />
@@ -418,6 +444,35 @@ export default function SpaceAddModal({
             </div>
           </div>
         )}
+        {groupNameOpen ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 p-6" onClick={() => setGroupNameOpen(false)}>
+            <form
+              className="w-full max-w-sm border border-zinc-700 bg-zinc-950 p-4 shadow-2xl"
+              onSubmit={(event) => {
+                event.preventDefault();
+                commitGroup();
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="mb-3 text-sm font-medium text-zinc-100">{t('add.groupNameTitle')}</div>
+              <input
+                autoFocus
+                value={groupNameDraft}
+                onChange={(event) => setGroupNameDraft(event.target.value)}
+                placeholder={t('add.groupNamePlaceholder')}
+                className="w-full border border-zinc-700 bg-black px-2 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-300"
+              />
+              <div className="mt-4 flex justify-end gap-2">
+                <button type="button" onClick={() => setGroupNameOpen(false)} className="border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:text-white">
+                  {t('add.cancel')}
+                </button>
+                <button type="submit" disabled={!groupNameDraft.trim()} className="bg-white px-3 py-1.5 text-xs text-black disabled:bg-zinc-800 disabled:text-zinc-500">
+                  {t('add.confirm')}
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : null}
       </motion.div>
     </motion.div>,
     document.body,
@@ -462,14 +517,7 @@ function PinSessionCard({
   const { t } = useTranslation();
   const card = useAgentPhase(task.id, task.status);
   const title = task.name || t('board.loadingTitle');
-  const rest = [
-    t('board.messages', { count: task.messageCount }),
-    task.lastActivity
-      ? formatRelativeTime(task.lastActivity)
-      : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  const rest = <TokenCount value={task.tokenCount} />;
 
   return (
     <button
@@ -477,7 +525,7 @@ function PinSessionCard({
       disabled={added}
       onClick={onPin}
       title={added ? t('add.onBoard') : t('add.pin')}
-      className={`tl-task-card is-pick${card.active ? ' is-run' : ''}${added ? ' is-added' : ''}`}
+      className={`tl-task-card is-pick${isRunningPhase(card.task) ? ' is-run' : ''}${added ? ' is-added' : ''}`}
       style={{ height: 104, borderRadius: 14 }}
     >
       <div className="tl-task-card__bot">
@@ -496,7 +544,7 @@ function PinSessionCard({
         </div>
         <div className="tl-task-card__meta">
           <ModelMark model={task.model} provider={task.provider} />
-          {rest ? <span className="tl-task-card__meta-rest">· {rest}</span> : null}
+          {rest}
         </div>
       </div>
     </button>

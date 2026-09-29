@@ -42,9 +42,27 @@ function isValidGroups(v: unknown): v is SpaceGroup[] {
   );
 }
 
+export function normalizePersistedGroups(groups: SpaceGroup[]): SpaceGroup[] {
+  const legacyFrameGroups = groups.filter((group) => group.id.startsWith('shape:'));
+  if (legacyFrameGroups.length === 0) return groups;
+
+  const kept = groups.filter((group) => !group.id.startsWith('shape:'));
+  const assigned = new Set(kept.flatMap((group) => group.taskIds));
+  const recovered = [...new Set(legacyFrameGroups.flatMap((group) => group.taskIds))]
+    .filter((taskId) => !assigned.has(taskId));
+  const defaultIndex = kept.findIndex((group) => group.id === 'default');
+  if (defaultIndex < 0) return [defaultGroup(recovered), ...kept];
+  return kept.map((group, index) => index === defaultIndex
+    ? { ...group, taskIds: [...group.taskIds, ...recovered] }
+    : group);
+}
+
 function loadGroups(): SpaceGroup[] {
-  return readLocalJson(V2_KEY, (value) =>
+  const groups = readLocalJson(V2_KEY, (value) =>
     isValidGroups(value) && value.length > 0 ? value : null, () => [defaultGroup()]);
+  const normalized = normalizePersistedGroups(groups);
+  if (normalized !== groups) save(normalized);
+  return normalized;
 }
 
 function save(groups: SpaceGroup[]): void {
@@ -148,7 +166,7 @@ export const useSpaceStore = create<SpaceStoreState>()((set, get) => ({
     }));
     const incomingIds = new Set(next.map((g) => g.id));
     for (const g of prev) {
-      if (g.id === 'default') continue;
+      if (g.id === 'default' || g.id.startsWith('shape:')) continue;
       if (incomingIds.has(g.id)) continue;
       if (g.taskIds.length === 0) next.push(g);
     }

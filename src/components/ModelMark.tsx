@@ -24,8 +24,11 @@ export default function ModelMark({ model, provider, className = '' }: ModelMark
           <use href={`#${brand.iconId}`} />
         </svg>
       ) : null}
-      <span className="model-mark__short">{brand.short}</span>
-      {brand.raw ? <span className="model-mark__raw"> — {brand.raw}</span> : null}
+      {brand.raw ? (
+        <span className="model-mark__id">{brand.raw}</span>
+      ) : (
+        <span className="model-mark__id">{brand.short}</span>
+      )}
     </span>
   );
 }

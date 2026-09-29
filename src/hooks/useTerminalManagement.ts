@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { TerminalClient } from '@bohemian/terminal-client';
 import type { CanvasTerminalNode } from '@bohemian/terminal-canvas';
-import { getBoardTerminalApi } from '@/board/terminalApi';
-import { clearBoardTaskAttention } from '@/board/terminalActivity';
+import { getBoardTerminalApi, subscribeBoardTerminalApi } from '@/board/terminalApi';
 import { isLiveSuppressed } from '@/board/terminalLive';
 import type { Task } from '@/types';
 
@@ -24,6 +23,20 @@ export function useTerminalManagement(tasks: Task[], view: View, setView: (v: Vi
   );
 
   const pendingTerminalNodeId = useRef<string | null>(null);
+  const pendingFreeTerminalRef = useRef(false);
+  const creatingFreeTerminalRef = useRef(false);
+
+  const requestFreeTerminal = (api: ReturnType<typeof getBoardTerminalApi>) => {
+    if (!api || creatingFreeTerminalRef.current) return;
+    creatingFreeTerminalRef.current = true;
+    void api.createFree()
+      .catch((error) => {
+        console.error('[Terminal] failed to create a free terminal', error);
+      })
+      .finally(() => {
+        creatingFreeTerminalRef.current = false;
+      });
+  };
 
   const terminalNodes = useMemo(
     () =>
@@ -48,52 +61,68 @@ export function useTerminalManagement(tasks: Task[], view: View, setView: (v: Vi
 
   // 打开终端：如果不在白板视图或API未就绪，则延迟打开
   const openTerminalForTask = (taskId: string, taskOverride?: Task) => {
-    clearBoardTaskAttention(taskId);
     const api = getBoardTerminalApi();
-    const node = taskOverride
+    const task = taskOverride ?? tasks.find((item) => item.id === taskId);
+    const node = task
       ? {
-          id: taskOverride.id,
-          sessionId: taskOverride.id,
-          cwd: taskOverride.workingDir,
-          title: taskOverride.name,
-          agentKind: taskOverride.agentKind,
-          live: taskOverride.status === 'running',
+          id: task.id,
+          sessionId: task.id,
+          cwd: task.workingDir,
+          title: task.name,
+          agentKind: task.agentKind,
+          live: task.status === 'running' && !isLiveSuppressed(task.id),
         }
-      : terminalNodes.get(taskId) ?? { id: taskId };
+      : terminalNodes.get(taskId);
+    // Never create a bare shell for a task card. A provider and working
+    // directory are required to build a resume command deterministically.
+    if (!node || !node.agentKind || !node.cwd) return;
     if (view !== 'board' || !api) {
       pendingTerminalNodeId.current = taskId;
       setView('board');
       return;
     }
-    void api.openForNode(node);
+    void api.openForNode(node).catch((error) => {
+      console.error('[Terminal] failed to open terminal', error);
+    });
   };
 
-  const createNewTerminal = () => {
+  const addEmptyTerminal = () => {
     if (view !== 'board') setView('board');
-    const open = () => void getBoardTerminalApi()?.createFree();
-    if (getBoardTerminalApi()) open();
-    else window.setTimeout(open, 80);
+    const api = getBoardTerminalApi();
+    if (api) {
+      requestFreeTerminal(api);
+      return;
+    }
+    pendingFreeTerminalRef.current = true;
   };
 
-  // 处理延迟打开终端
   useEffect(() => {
-    if (view !== 'board' || !pendingTerminalNodeId.current) return;
-    const taskId = pendingTerminalNodeId.current;
-    const timer = window.setTimeout(() => {
-      if (pendingTerminalNodeId.current !== taskId) return;
+    if (view !== 'board') return;
+    const tryOpenPending = () => {
       const api = getBoardTerminalApi();
       if (!api) return;
+      if (pendingFreeTerminalRef.current) {
+        pendingFreeTerminalRef.current = false;
+        requestFreeTerminal(api);
+      }
+      const taskId = pendingTerminalNodeId.current;
+      if (!taskId) return;
+      const node = terminalNodes.get(taskId);
+      if (!node || !node.agentKind || !node.cwd) return;
       pendingTerminalNodeId.current = null;
-      void api.openForNode(terminalNodes.get(taskId) ?? { id: taskId });
-    }, 80);
-    return () => window.clearTimeout(timer);
+      void api.openForNode(node).catch((error) => {
+        console.error('[Terminal] failed to open pending terminal', error);
+      });
+    };
+    tryOpenPending();
+    return subscribeBoardTerminalApi(tryOpenPending);
   }, [terminalNodes, view]);
 
   return {
     terminalClient,
     terminalNodes,
     openTerminalForTask,
-    createNewTerminal,
+    addEmptyTerminal,
   };
 }
 

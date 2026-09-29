@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createDebouncedTask } from '@/lib/timing';
+import { fetchWithTransientRetry } from '@/lib/httpRetry';
 import { parseControlTask } from '@bohemian/agent-protocol';
 import type { Task } from '@/types';
 import { subscribeTaskSync } from '@/board/terminalActivity';
@@ -14,6 +16,7 @@ interface DigestEntry {
   id: string;
   modified: string | null;
   messageCount: number;
+  tokenCount?: number;
   status?: string;
 }
 
@@ -39,6 +42,7 @@ export function useTasks() {
   const prevDigestRef = useRef<Map<string, string>>(new Map());
   const requestRef = useRef<{ controller: AbortController; generation: number } | null>(null);
   const requestGenerationRef = useRef(0);
+  const changedReset = useMemo(() => createDebouncedTask(4000), []);
 
   const beginRequest = useCallback(() => {
     requestRef.current?.controller.abort();
@@ -66,7 +70,7 @@ export function useTasks() {
   const fetchFull = useCallback(async (changed: Set<string> | null) => {
     const request = beginRequest();
     try {
-      const response = await fetch('/api/sessions', { signal: request.controller.signal });
+      const response = await fetchWithTransientRetry('/api/sessions', { signal: request.controller.signal });
       if (!response.ok) throw new Error(`Failed to load tasks (${response.status})`);
       const data: unknown = await response.json();
       if (!isCurrentRequest(request.generation)) return;
@@ -89,13 +93,13 @@ export function useTasks() {
       for (const task of fresh) digest.set(task.id, digestKey(task));
       prevDigestRef.current = digest;
       publish(next, changed ? [...changed] : []);
-      if (changed) window.setTimeout(() => setChangedIds([]), 4000);
+      if (changed) changedReset.schedule(() => setChangedIds([]));
       setLastUpdate(new Date());
       setError(null);
     } finally {
       if (isCurrentRequest(request.generation)) requestRef.current = null;
     }
-  }, [beginRequest, isCurrentRequest, publish]);
+  }, [beginRequest, changedReset, isCurrentRequest, publish]);
 
   const refresh = useCallback(async () => {
     try {
@@ -108,21 +112,21 @@ export function useTasks() {
   }, [fetchFull]);
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    const refreshTask = createDebouncedTask(250);
     const unsubscribe = subscribeTaskSync(() => {
-      if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
+      refreshTask.schedule(() => {
         void fetchFull(null).catch((err) => {
           if (!isAbortError(err)) setError(err instanceof Error ? err.message : 'Unknown error');
         });
-      }, 250);
+      });
     });
     return () => {
       unsubscribe();
-      if (timer !== null) clearTimeout(timer);
+      refreshTask.cancel();
     };
   }, [fetchFull]);
+
+  useEffect(() => () => changedReset.cancel(), [changedReset]);
   useEffect(() => {
     let stopped = false;
     const poll = async () => {
@@ -133,7 +137,7 @@ export function useTasks() {
           return;
         }
         const request = beginRequest();
-        const response = await fetch('/api/digest', { signal: request.controller.signal });
+        const response = await fetchWithTransientRetry('/api/digest', { signal: request.controller.signal });
         if (!response.ok) throw new Error(`Failed to load task digest (${response.status})`);
         const digest: unknown = await response.json();
         if (!isCurrentRequest(request.generation)) return;
@@ -151,7 +155,7 @@ export function useTasks() {
         const seen = new Set<string>();
         for (const entry of (digest.sessions ?? []) as DigestEntry[]) {
           seen.add(entry.id);
-          const key = `${entry.modified ?? ''}:${entry.messageCount}:${entry.status ?? ''}`;
+          const key = `${entry.modified ?? ''}:${entry.messageCount}:${entry.tokenCount ?? ''}:${entry.status ?? ''}`;
           if (previous.get(entry.id) !== key) changed.add(entry.id);
         }
         for (const id of previous.keys()) if (!seen.has(id)) changed.add(id);
@@ -190,5 +194,5 @@ function isAbortError(error: unknown): boolean {
 }
 
 function digestKey(task: Task): string {
-  return `${task.lastActivity instanceof Date ? task.lastActivity.toISOString() : task.lastActivity}:${task.messageCount}:${task.status}`;
+  return `${task.lastActivity instanceof Date ? task.lastActivity.toISOString() : task.lastActivity}:${task.messageCount}:${task.tokenCount ?? ''}:${task.status}`;
 }

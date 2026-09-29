@@ -10,8 +10,9 @@ export type RecordAxis = 'pending' | 'running' | 'completed' | 'deleted' | 'erro
 export type TerminalPresence = 'starting' | 'open' | 'stopped' | 'missing' | 'none';
 
 /**
- * The only status the icon may animate.
- * `running` is process-live. It is not TUI working.
+ * What the card lamp says.
+ * `running` means the agent is in a turn (`activity: working`), not that a terminal is open.
+ * An open terminal with no turn is `idle`.
  */
 export type BoardAgentStatus =
   | 'working'
@@ -62,16 +63,16 @@ export function resolveStatusAxes(input: AgentPhaseInput): StatusAxes {
   };
 }
 
-/** Task lamp. An open terminal is not a running task. */
+/** Task lamp. An open terminal is not a running task. A dead terminal closes the turn. */
 export function iconStatus(axes: StatusAxes): BoardAgentStatus {
   if (axes.record === 'deleted') return 'deleted';
+  if (axes.process === 'exited' || axes.process === 'missing') {
+    return axes.record === 'error' ? 'error' : 'completed';
+  }
   if (axes.activity === 'blocked') return 'blocked';
   if (axes.activity === 'working') return 'running';
   if (axes.process === 'starting') return 'starting';
   if (axes.activity === 'idle' || axes.process === 'live') return 'idle';
-  if (axes.process === 'exited' || axes.process === 'missing') {
-    return axes.record === 'error' ? 'error' : 'completed';
-  }
   if (axes.record === 'pending') return 'pending';
   if (axes.record === 'error') return 'error';
   if (axes.record === 'completed') return 'completed';
@@ -106,6 +107,10 @@ export function projectCardStatus(input: AgentPhaseInput): CardStatus {
     terminal: terminalPresence(axes.process),
     active: task === 'running' || task === 'blocked' || task === 'starting',
   };
+}
+
+export function isRunningPhase(status: BoardAgentStatus): boolean {
+  return status === 'running';
 }
 
 export function isActivePhase(status: BoardAgentStatus): boolean {

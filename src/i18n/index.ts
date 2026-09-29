@@ -8,7 +8,21 @@ import en from './locales/en.json';
 
 export const LANG_KEY = 'bohemian-agent-control:lang';
 
-void i18n
+const pendingBundles: Array<{ language: string; resources: Record<string, unknown> }> = [];
+
+function addBundle(language: string, resources: Record<string, unknown>): void {
+  i18n.addResourceBundle(language, 'translation', resources, true, true);
+}
+
+export function addAppTranslations(language: string, resources: Record<string, unknown>): void {
+  if (i18n.isInitialized) {
+    addBundle(language, resources);
+    return;
+  }
+  pendingBundles.push({ language, resources });
+}
+
+export const i18nReady = i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
@@ -18,7 +32,6 @@ void i18n
     },
     fallbackLng: 'zh-CN',
     supportedLngs: ['zh-CN', 'en'],
-    nonExplicitSupportedLngs: true,
     interpolation: { escapeValue: false },
     detection: {
       order: ['localStorage', 'navigator'],
@@ -26,6 +39,10 @@ void i18n
       caches: ['localStorage'],
     },
   });
+
+void i18nReady.then(() => {
+  for (const bundle of pendingBundles.splice(0)) addBundle(bundle.language, bundle.resources);
+});
 
 export function dateLocale() {
   return i18n.language.startsWith('zh') ? zhCN : enUS;

@@ -12,6 +12,12 @@ const BRANDS: Record<AgentKindId, AgentBrand> = {
   pi: { id: 'pi', iconId: 'pi', labelKey: 'add.agents.pi' },
 };
 
+/** Pi session files expose a count. Codex and Claude listings currently do not. */
+export function showsMessageCount(agentKind?: string | null): boolean {
+  const kind = parseAgentKind(agentKind ?? undefined)?.id;
+  return kind !== 'codex' && kind !== 'claude-code';
+}
+
 export function parseAgentKind(value?: string): AgentBrand | null {
   const normalized = (value ?? '').trim().toLowerCase().replace(/[ _]+/g, '-');
   if (!normalized) return null;

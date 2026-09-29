@@ -1,14 +1,74 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
+import {
+  LayoutGrid,
+  Plug,
+  RotateCcw,
+  SquareTerminal,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import {
   TERMINAL_FONTS,
   TERMINAL_THEMES,
   resolveTerminalAppearance,
   useTerminalAppearance,
   type TerminalCursorStyle,
+  type TerminalAppearance,
+  type TerminalFontId,
+  type TerminalThemeId,
 } from '@bohemian/terminal-ui/appearance';
+import {
+  DEFAULT_AGENTS_PER_ROW,
+  MAX_AGENTS_PER_ROW,
+  MIN_AGENTS_PER_ROW,
+  useBoardLayoutStore,
+} from '@/board/boardLayoutStore';
+import { BoardPluginSettingsHost } from '@/board/plugins/hosts/BoardPluginSettingsHost';
+import { UserPluginManager } from './UserPluginManager';
+
+type SettingsSectionId = 'terminal' | 'board' | 'plugins';
+
+interface SettingsSectionDefinition {
+  id: SettingsSectionId;
+  labelKey: string;
+  descriptionKey: string;
+  icon: LucideIcon;
+}
+
+interface TerminalAppearanceControls extends TerminalAppearance {
+  setFont: (fontId: TerminalFontId) => void;
+  setTheme: (themeId: TerminalThemeId) => void;
+  setFontSize: (fontSize: number) => void;
+  setBackground: (background: string | null) => void;
+  setForeground: (foreground: string | null) => void;
+  setCursor: (cursor: string | null) => void;
+  setCursorStyle: (cursorStyle: TerminalCursorStyle) => void;
+  setCursorBlink: (cursorBlink: boolean) => void;
+}
+
+const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
+  {
+    id: 'terminal',
+    labelKey: 'settings.navigation.terminal',
+    descriptionKey: 'settings.navigation.terminalHint',
+    icon: SquareTerminal,
+  },
+  {
+    id: 'board',
+    labelKey: 'settings.navigation.board',
+    descriptionKey: 'settings.navigation.boardHint',
+    icon: LayoutGrid,
+  },
+  {
+    id: 'plugins',
+    labelKey: 'settings.navigation.plugins',
+    descriptionKey: 'settings.navigation.pluginsHint',
+    icon: Plug,
+  },
+];
 
 const CURSORS: { id: TerminalCursorStyle; labelKey: string }[] = [
   { id: 'bar', labelKey: 'settings.cursorBar' },
@@ -24,163 +84,157 @@ export default function TerminalSettingsModal({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const reduceMotion = useReducedMotion();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>('terminal');
   const appearance = useTerminalAppearance();
   const resolved = resolveTerminalAppearance(appearance);
+  const agentsPerRow = useBoardLayoutStore((state) => state.agentsPerRow);
+  const setAgentsPerRow = useBoardLayoutStore((state) => state.setAgentsPerRow);
+  const activeDefinition = SETTINGS_SECTIONS.find((section) => section.id === activeSection) ?? SETTINGS_SECTIONS[0];
+
+  useEffect(() => {
+    if (!open) return;
+    dialogRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose, open]);
+
   if (!open || typeof document === 'undefined') return null;
+
+  const resetActiveSection = () => {
+    if (activeSection === 'terminal') appearance.reset();
+    if (activeSection === 'board') setAgentsPerRow(DEFAULT_AGENTS_PER_ROW);
+  };
 
   return createPortal(
     <motion.div
-      initial={{ opacity: 0 }}
+      initial={reduceMotion ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
-      onClick={onClose}
-      className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/70 p-4"
+      transition={{ duration: reduceMotion ? 0 : 0.16 }}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-[200000] flex items-center justify-center bg-black/80 p-2 backdrop-blur-[2px] sm:p-4"
     >
       <motion.div
-        initial={{ opacity: 0, scale: 0.96 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.15 }}
-        onClick={(event) => event.stopPropagation()}
-        className="flex max-h-[84vh] w-full max-w-lg flex-col border border-zinc-700 bg-black"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-section-title"
+        tabIndex={-1}
+        initial={reduceMotion ? false : { opacity: 0, y: 12, scale: 0.985 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: reduceMotion ? 0 : 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+        className="grid h-[min(780px,calc(100dvh-16px))] w-full max-w-5xl grid-cols-1 overflow-hidden rounded-[12px] border border-zinc-700 bg-[#0a0a0d] shadow-[0_28px_100px_rgba(0,0,0,0.72)] outline-none md:h-[min(780px,calc(100dvh-32px))] md:grid-cols-[224px_minmax(0,1fr)]"
       >
-        <div className="flex shrink-0 items-center gap-2 border-b border-zinc-800 px-3 py-2">
-          <div className="pixel-font text-[8px] text-zinc-100">{t('settings.title')}</div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="ml-auto px-2 py-1 text-[13px] text-zinc-400 hover:text-white"
-            title={t('add.close')}
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="flex-1 space-y-5 overflow-y-auto p-4">
-          <div
-            className="border border-zinc-800 px-3 py-3"
-            style={{
-              background: resolved.theme.background,
-              color: resolved.theme.foreground,
-              fontFamily: resolved.fontFamily,
-              fontSize: appearance.fontSize,
-              lineHeight: appearance.lineHeight,
-            }}
-          >
-            <div style={{ opacity: 0.55 }}>{t('settings.previewHint')}</div>
-            {['pi --session …', 'claude --resume …', 'codex resume …'].map((command) => (
-              <div key={command}>
-                <span style={{ color: resolved.theme.green }}>$</span> {command}
-              </div>
-            ))}
+        <aside className="hidden min-h-0 flex-col border-r border-zinc-800 bg-[#0d0d11] md:flex">
+          <div className="border-b border-zinc-800 px-5 py-5">
+            <div className="pixel-font text-[9px] text-zinc-100">
+              {t('settings.title').toUpperCase()}
+            </div>
+            <p className="mt-2 text-[11px] leading-5 text-zinc-500">{t('settings.controlCenterHint')}</p>
           </div>
-
-          <Section title={t('settings.theme')}>
-            <div className="flex flex-wrap gap-1">
-              {TERMINAL_THEMES.map((theme) => (
-                <Chip
-                  key={theme.id}
-                  active={appearance.themeId === theme.id}
-                  onClick={() => appearance.setTheme(theme.id)}
-                >
-                  {theme.label}
-                </Chip>
-              ))}
-            </div>
-          </Section>
-
-          <Section title={t('settings.colors')}>
-            <ColorRow
-              label={t('settings.background')}
-              value={resolved.theme.background ?? '#101014'}
-              custom={Boolean(appearance.background)}
-              onChange={appearance.setBackground}
-              onReset={() => appearance.setBackground(null)}
-              resetLabel={t('settings.useTheme')}
-            />
-            <ColorRow
-              label={t('settings.foreground')}
-              value={resolved.theme.foreground ?? '#f3efe6'}
-              custom={Boolean(appearance.foreground)}
-              onChange={appearance.setForeground}
-              onReset={() => appearance.setForeground(null)}
-              resetLabel={t('settings.useTheme')}
-            />
-            <ColorRow
-              label={t('settings.cursorColor')}
-              value={resolved.theme.cursor ?? '#f0c36a'}
-              custom={Boolean(appearance.cursor)}
-              onChange={appearance.setCursor}
-              onReset={() => appearance.setCursor(null)}
-              resetLabel={t('settings.useTheme')}
-            />
-          </Section>
-
-          <Section title={t('settings.font')}>
-            <div className="flex flex-wrap gap-1">
-              {TERMINAL_FONTS.map((font) => (
-                <Chip key={font.id} active={appearance.fontId === font.id} onClick={() => appearance.setFont(font.id)}>
-                  {font.label}
-                </Chip>
-              ))}
-            </div>
-            <SliderRow
-              label={t('settings.fontSize')}
-              value={`${appearance.fontSize}px`}
-              min={10}
-              max={28}
-              step={1}
-              current={appearance.fontSize}
-              onChange={appearance.setFontSize}
-            />
-            <SliderRow
-              label={t('settings.lineHeight')}
-              value={appearance.lineHeight.toFixed(2)}
-              min={1}
-              max={1}
-              step={0.05}
-              current={appearance.lineHeight}
-              onChange={appearance.setLineHeight}
-            />
-          </Section>
-
-          <Section title={t('settings.cursor')}>
-            <div className="flex flex-wrap gap-1">
-              {CURSORS.map((item) => (
-                <Chip
-                  key={item.id}
-                  active={appearance.cursorStyle === item.id}
-                  onClick={() => appearance.setCursorStyle(item.id)}
-                >
-                  {t(item.labelKey)}
-                </Chip>
-              ))}
-            </div>
-            <label className="mt-2 flex items-center justify-between text-[13px] text-zinc-300">
-              <span>{t('settings.cursorBlink')}</span>
-              <input
-                type="checkbox"
-                checked={appearance.cursorBlink}
-                onChange={(event) => appearance.setCursorBlink(event.target.checked)}
-                className="h-4 w-4 accent-zinc-100"
+          <nav className="flex-1 space-y-1 p-3" aria-label={t('settings.title')}>
+            {SETTINGS_SECTIONS.map((section) => (
+              <SettingsNavButton
+                key={section.id}
+                section={section}
+                active={activeSection === section.id}
+                onClick={() => setActiveSection(section.id)}
               />
-            </label>
-          </Section>
-        </div>
+            ))}
+          </nav>
+          <div className="border-t border-zinc-800 px-4 py-4 font-mono text-[9px] leading-4 text-zinc-600">
+            {t('settings.autoSaveHint')}
+          </div>
+        </aside>
 
-        <div className="flex shrink-0 justify-end gap-2 border-t border-zinc-800 px-3 py-2">
-          <button
-            type="button"
-            onClick={() => appearance.reset()}
-            className="px-btn px-btn-dark box-shadow-margin h-8 px-3 pixel-font text-[8px]"
-          >
-            {t('settings.reset')}
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-btn px-btn-primary box-shadow-margin h-8 px-3 pixel-font text-[8px]"
-          >
-            {t('settings.done')}
-          </button>
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <header className="flex min-h-16 shrink-0 items-center gap-3 border-b border-zinc-800 px-4 py-3 sm:px-5">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 md:hidden">
+                <span className="pixel-font text-[8px] text-zinc-100">
+                  {t('settings.title').toUpperCase()}
+                </span>
+                <span className="text-zinc-700">/</span>
+              </div>
+              <h2 id="settings-section-title" className="mt-1 text-[15px] font-medium text-zinc-100 md:mt-0">
+                {t(activeDefinition.labelKey)}
+              </h2>
+              <p className="mt-0.5 hidden text-[11px] leading-4 text-zinc-500 sm:block">
+                {t(activeDefinition.descriptionKey)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid h-8 w-8 shrink-0 place-items-center border border-zinc-800 text-zinc-500 transition-colors hover:border-zinc-600 hover:bg-zinc-900 hover:text-white active:translate-y-px"
+              title={t('add.close')}
+              aria-label={t('add.close')}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </header>
+
+          <nav className="flex shrink-0 overflow-x-auto border-b border-zinc-800 bg-[#0d0d11] p-2 md:hidden" aria-label={t('settings.title')}>
+            {SETTINGS_SECTIONS.map((section) => {
+              const Icon = section.icon;
+              const active = activeSection === section.id;
+              return (
+                <button
+                  key={section.id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setActiveSection(section.id)}
+                  className={`flex min-w-max items-center gap-2 border px-3 py-2 text-[11px] transition-colors active:translate-y-px ${
+                    active
+                      ? 'border-zinc-400 bg-zinc-100 text-zinc-950'
+                      : 'border-transparent text-zinc-500 hover:border-zinc-700 hover:text-zinc-200'
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {t(section.labelKey)}
+                </button>
+              );
+            })}
+          </nav>
+
+          <main className="settings-scrollbar min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
+            {activeSection === 'terminal' ? (
+              <TerminalAppearanceSettings appearance={appearance} resolved={resolved} />
+            ) : null}
+            {activeSection === 'board' ? (
+              <BoardLayoutSettings agentsPerRow={agentsPerRow} setAgentsPerRow={setAgentsPerRow} />
+            ) : null}
+            {activeSection === 'plugins' ? <PluginSettings /> : null}
+          </main>
+
+          <footer className="flex min-h-14 shrink-0 items-center gap-3 border-t border-zinc-800 bg-[#0d0d11] px-4 py-3 sm:px-5">
+            <span className="hidden text-[10px] text-zinc-600 sm:block">{t('settings.autoSaveHint')}</span>
+            <div className="ml-auto flex items-center gap-2">
+              {activeSection !== 'plugins' ? (
+                <button
+                  type="button"
+                  onClick={resetActiveSection}
+                  className="flex h-8 items-center gap-2 border border-zinc-800 px-3 text-[10px] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-100 active:translate-y-px"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  {t('settings.reset')}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-btn px-btn-primary box-shadow-margin h-8 px-4 pixel-font text-[8px]"
+              >
+                {t('settings.done')}
+              </button>
+            </div>
+          </footer>
         </div>
       </motion.div>
     </motion.div>,
@@ -188,16 +242,260 @@ export default function TerminalSettingsModal({
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function SettingsNavButton({
+  section,
+  active,
+  onClick,
+}: {
+  section: SettingsSectionDefinition;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const { t } = useTranslation();
+  const Icon = section.icon;
   return (
-    <section className="space-y-2">
-      <div className="text-[10px] uppercase tracking-wide text-zinc-500">{title}</div>
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`relative flex w-full items-start gap-3 border px-3 py-3 text-left transition-colors active:translate-y-px ${
+        active
+          ? 'border-zinc-700 bg-zinc-900 text-zinc-100'
+          : 'border-transparent text-zinc-500 hover:border-zinc-800 hover:bg-zinc-950 hover:text-zinc-300'
+      }`}
+    >
+      {active ? <span className="absolute bottom-2 left-0 top-2 w-0.5 bg-zinc-100" /> : null}
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+      <span className="min-w-0">
+        <span className="block text-[12px] font-medium">{t(section.labelKey)}</span>
+        <span className="mt-1 block text-[10px] leading-4 text-zinc-600">{t(section.descriptionKey)}</span>
+      </span>
+    </button>
+  );
+}
+
+function TerminalAppearanceSettings({
+  appearance,
+  resolved,
+}: {
+  appearance: TerminalAppearanceControls;
+  resolved: ReturnType<typeof resolveTerminalAppearance>;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="grid gap-4 xl:grid-cols-2">
+      <SettingsPanel className="xl:col-span-2" title={t('settings.preview')} hint={t('settings.previewHint')}>
+        <div
+          className="relative min-h-36 overflow-hidden border border-white/10 p-4 shadow-inner"
+          style={{
+            background: resolved.theme.background,
+            color: resolved.theme.foreground,
+            fontFamily: resolved.fontFamily,
+            fontSize: appearance.fontSize,
+            lineHeight: appearance.lineHeight,
+          }}
+        >
+          <div className="pointer-events-none absolute inset-0 opacity-[0.04] [background-image:linear-gradient(rgba(255,255,255,.7)_1px,transparent_1px)] [background-size:100%_4px]" />
+          <div className="relative space-y-1">
+            <div style={{ opacity: 0.48 }}>bohemian-agent-control / workspace</div>
+            {['pi --session …', 'claude --resume …', 'codex resume …'].map((command, index) => (
+              <div key={command}>
+                <span style={{ color: resolved.theme.green }}>$</span> {command}
+                {index === 2 ? <span className="ml-1 inline-block h-[1em] w-[0.5em] align-[-0.12em]" style={{ background: resolved.theme.cursor }} /> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      </SettingsPanel>
+
+      <SettingsPanel title={t('settings.theme')} hint={t('settings.themeHint')}>
+        <div className="flex flex-wrap gap-2">
+          {TERMINAL_THEMES.map((theme) => (
+            <ChoiceChip
+              key={theme.id}
+              active={appearance.themeId === theme.id}
+              onClick={() => appearance.setTheme(theme.id)}
+            >
+              <span className="h-2.5 w-2.5 border border-white/15" style={{ background: theme.theme.background }} />
+              {theme.label}
+            </ChoiceChip>
+          ))}
+        </div>
+      </SettingsPanel>
+
+      <SettingsPanel title={t('settings.font')} hint={t('settings.fontHint')}>
+        <div className="flex flex-wrap gap-2">
+          {TERMINAL_FONTS.map((font) => (
+            <ChoiceChip key={font.id} active={appearance.fontId === font.id} onClick={() => appearance.setFont(font.id)}>
+              {font.label}
+            </ChoiceChip>
+          ))}
+        </div>
+        <div className="mt-4 space-y-3 border-t border-zinc-800 pt-4">
+          <SliderRow
+            label={t('settings.fontSize')}
+            value={`${appearance.fontSize}px`}
+            min={10}
+            max={28}
+            step={1}
+            current={appearance.fontSize}
+            onChange={appearance.setFontSize}
+          />
+        </div>
+      </SettingsPanel>
+
+      <SettingsPanel title={t('settings.colors')} hint={t('settings.colorsHint')}>
+        <div className="divide-y divide-zinc-800">
+          <ColorRow
+            label={t('settings.background')}
+            value={resolved.theme.background ?? '#101014'}
+            custom={Boolean(appearance.background)}
+            onChange={appearance.setBackground}
+            onReset={() => appearance.setBackground(null)}
+            resetLabel={t('settings.useTheme')}
+          />
+          <ColorRow
+            label={t('settings.foreground')}
+            value={resolved.theme.foreground ?? '#f3efe6'}
+            custom={Boolean(appearance.foreground)}
+            onChange={appearance.setForeground}
+            onReset={() => appearance.setForeground(null)}
+            resetLabel={t('settings.useTheme')}
+          />
+          <ColorRow
+            label={t('settings.cursorColor')}
+            value={resolved.theme.cursor ?? '#f0c36a'}
+            custom={Boolean(appearance.cursor)}
+            onChange={appearance.setCursor}
+            onReset={() => appearance.setCursor(null)}
+            resetLabel={t('settings.useTheme')}
+          />
+        </div>
+      </SettingsPanel>
+
+      <SettingsPanel title={t('settings.cursor')} hint={t('settings.cursorHint')}>
+        <div className="flex flex-wrap gap-2">
+          {CURSORS.map((item) => (
+            <ChoiceChip
+              key={item.id}
+              active={appearance.cursorStyle === item.id}
+              onClick={() => appearance.setCursorStyle(item.id)}
+            >
+              {t(item.labelKey)}
+            </ChoiceChip>
+          ))}
+        </div>
+        <div className="mt-4 border-t border-zinc-800 pt-4">
+          <SettingSwitch
+            label={t('settings.cursorBlink')}
+            hint={t('settings.cursorBlinkHint')}
+            checked={appearance.cursorBlink}
+            onChange={appearance.setCursorBlink}
+          />
+        </div>
+      </SettingsPanel>
+    </div>
+  );
+}
+
+function BoardLayoutSettings({
+  agentsPerRow,
+  setAgentsPerRow,
+}: {
+  agentsPerRow: number;
+  setAgentsPerRow: (value: number) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(280px,.85fr)]">
+      <SettingsPanel title={t('settings.agentsPerRow')} hint={t('settings.agentsPerRowHint')}>
+        <div className="mt-2 flex items-center justify-between gap-4 border-y border-zinc-800 py-5">
+          <div>
+            <div className="font-mono text-4xl tabular-nums text-zinc-100">{agentsPerRow}</div>
+            <div className="mt-1 text-[10px] uppercase tracking-[0.16em] text-zinc-600">{t('settings.columns')}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="grid h-10 w-10 place-items-center border border-zinc-700 text-lg text-zinc-200 hover:border-zinc-400 hover:bg-zinc-900 disabled:text-zinc-700 active:translate-y-px"
+              onClick={() => setAgentsPerRow(agentsPerRow - 1)}
+              disabled={agentsPerRow <= MIN_AGENTS_PER_ROW}
+              aria-label={t('settings.agentsPerRowDecrease')}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="grid h-10 w-10 place-items-center border border-zinc-700 text-lg text-zinc-200 hover:border-zinc-400 hover:bg-zinc-900 disabled:text-zinc-700 active:translate-y-px"
+              onClick={() => setAgentsPerRow(agentsPerRow + 1)}
+              disabled={agentsPerRow >= MAX_AGENTS_PER_ROW}
+              aria-label={t('settings.agentsPerRowIncrease')}
+            >
+              +
+            </button>
+          </div>
+        </div>
+        <p className="mt-4 text-[11px] leading-5 text-zinc-500">{t('settings.boardSaveHint')}</p>
+      </SettingsPanel>
+
+      <SettingsPanel title={t('settings.layoutPreview')} hint={t('settings.layoutPreviewHint')}>
+        <div className="overflow-hidden border border-zinc-800 bg-[#08080b] p-4">
+          <div
+            className="grid gap-1.5"
+            style={{ gridTemplateColumns: `repeat(${agentsPerRow}, minmax(18px, 1fr))` }}
+            aria-hidden="true"
+          >
+            {Array.from({ length: agentsPerRow }, (_, index) => (
+              <div key={index} className="aspect-[4/3] min-h-8 border border-zinc-600 bg-zinc-800" />
+            ))}
+            <div className="aspect-[4/3] min-h-8 border border-dashed border-zinc-800 bg-zinc-950" />
+          </div>
+          <div className="mt-3 flex items-center gap-2 text-[9px] uppercase tracking-[0.14em] text-zinc-700">
+            <span className="h-px flex-1 bg-zinc-900" />
+            {t('settings.nextRow')}
+            <span className="h-px flex-1 bg-zinc-900" />
+          </div>
+        </div>
+      </SettingsPanel>
+    </div>
+  );
+}
+
+function PluginSettings() {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-5">
+      <UserPluginManager />
+      <SettingsPanel title={t('settings.pluginPreferences')} hint={t('settings.pluginPreferencesHint')}>
+        <BoardPluginSettingsHost />
+      </SettingsPanel>
+    </div>
+  );
+}
+
+function SettingsPanel({
+  title,
+  hint,
+  className = '',
+  children,
+}: {
+  title: string;
+  hint?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className={`rounded-[10px] border border-zinc-800 bg-[#101014] p-4 ${className}`}>
+      <div className="mb-4">
+        <h3 className="text-[12px] font-medium text-zinc-200">{title}</h3>
+        {hint ? <p className="mt-1 max-w-2xl text-[10px] leading-4 text-zinc-600">{hint}</p> : null}
+      </div>
       {children}
     </section>
   );
 }
 
-function Chip({
+function ChoiceChip({
   active,
   onClick,
   children,
@@ -209,9 +507,12 @@ function Chip({
   return (
     <button
       type="button"
+      aria-pressed={active}
       onClick={onClick}
-      className={`border px-2 py-1 text-[12px] ${
-        active ? 'border-zinc-200 bg-zinc-100 text-black' : 'border-zinc-800 text-zinc-300 hover:border-zinc-500'
+      className={`flex items-center gap-2 border px-2.5 py-1.5 text-[11px] transition-colors active:translate-y-px ${
+        active
+          ? 'border-zinc-200 bg-zinc-100 text-black'
+          : 'border-zinc-700 bg-zinc-950 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
       }`}
     >
       {children}
@@ -235,20 +536,27 @@ function ColorRow({
   resetLabel: string;
 }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-24 shrink-0 text-[13px] text-zinc-300">{label}</span>
-      <input
-        type="color"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-7 w-10 cursor-pointer border border-zinc-700 bg-black p-0"
-      />
-      <span className="flex-1 font-mono text-[12px] text-zinc-500">{value}</span>
+    <div className="flex min-h-12 items-center gap-3 py-2 first:pt-0 last:pb-0">
+      <label className="relative h-8 w-8 shrink-0 cursor-pointer overflow-hidden border border-zinc-600" style={{ background: value }}>
+        <input
+          type="color"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          aria-label={label}
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        />
+      </label>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[11px] text-zinc-300">{label}</span>
+        <span className="mt-0.5 block font-mono text-[10px] uppercase text-zinc-600">{value}</span>
+      </span>
       {custom ? (
-        <button type="button" onClick={onReset} className="text-[11px] text-zinc-400 hover:text-white">
+        <button type="button" onClick={onReset} className="text-[10px] text-zinc-500 hover:text-white active:translate-y-px">
           {resetLabel}
         </button>
-      ) : null}
+      ) : (
+        <span className="text-[9px] uppercase tracking-wide text-zinc-700">{resetLabel}</span>
+      )}
     </div>
   );
 }
@@ -271,8 +579,8 @@ function SliderRow({
   onChange: (value: number) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 text-[13px] text-zinc-300">
-      <span className="w-24 shrink-0">{label}</span>
+    <label className="grid grid-cols-[86px_minmax(0,1fr)_44px] items-center gap-3 text-[11px] text-zinc-400">
+      <span>{label}</span>
       <input
         type="range"
         min={min}
@@ -280,9 +588,39 @@ function SliderRow({
         step={step}
         value={current}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="min-w-0 flex-1 accent-zinc-100"
+        className="min-w-0 accent-zinc-100"
       />
-      <span className="w-12 text-right font-mono text-[12px] text-zinc-400">{value}</span>
+      <span className="text-right font-mono text-[10px] text-zinc-500">{value}</span>
+    </label>
+  );
+}
+
+function SettingSwitch({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start justify-between gap-4">
+      <span className="min-w-0">
+        <span className="block text-[11px] text-zinc-300">{label}</span>
+        <span className="mt-1 block text-[10px] leading-4 text-zinc-600">{hint}</span>
+      </span>
+      <span className={`relative mt-0.5 h-5 w-9 shrink-0 border transition-colors ${checked ? 'border-zinc-200 bg-zinc-100' : 'border-zinc-700 bg-zinc-950'}`}>
+        <span className={`absolute top-0.5 h-3.5 w-3.5 transition-transform ${checked ? 'translate-x-[17px] bg-zinc-950' : 'translate-x-0.5 bg-zinc-600'}`} />
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onChange(event.target.checked)}
+          className="sr-only"
+        />
+      </span>
     </label>
   );
 }

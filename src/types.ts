@@ -15,6 +15,13 @@ export interface Task {
   lastActivity: Date;
   size: number; // treemap 面积权重
   messageCount: number;
+  tokenCount?: number;
+  usageBreakdown?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
   toolCalls: number;
   tools: string[];
   /** 打开该会话的地址，由对应 Agent 适配器提供 */

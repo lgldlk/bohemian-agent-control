@@ -25,7 +25,7 @@ export function useAgentLaunchController(
       const bound = live ? boundSessionId(live) : undefined;
       const task = bound ? tasks.find((item) => item.id === bound) : findPendingTask(thread, tasks);
       const nextId = bound || task?.id;
-      if (!nextId || isBoardSpaceSyncReady()) continue;
+      if (!nextId || !isBoardSpaceSyncReady()) continue;
       removePending(thread.id);
       rebindTaskId(thread.id, nextId);
     }
@@ -35,6 +35,7 @@ export function useAgentLaunchController(
     const thread = addPending(cwd, agentKind);
     setLastUsed(cwd);
     addToGroup(thread.id, groupId);
+    void import('@/board/boardEditor').then(({ focusTaskShape }) => focusTaskShape(thread.id));
     openTerminalForTask(thread.id, pendingToTask(thread));
     return thread.id;
   }, [addPending, addToGroup, openTerminalForTask, setLastUsed]);

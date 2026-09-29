@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { DotRender } from '@/bot/decor';
 import { BotEngine, type BotFrame } from '@/bot/engine';
 import { DEMI_VIEWBOX, RAYON } from '@/bot/repere';
@@ -16,6 +16,8 @@ export interface BloubStatusIconProps {
   /** 卡片底色，眼睛镂空后要露出这个颜色 */
   paper?: string;
   className?: string;
+  /** Opt into per-frame SVG motion. Board cards keep this off for render isolation. */
+  animated?: boolean;
 }
 
 interface StatusSkin {
@@ -24,6 +26,7 @@ interface StatusSkin {
 }
 
 const CLOUD = SHAPE_BY_ID.get('nuage')?.radii ?? null;
+const ANIMATED_STATUSES = new Set<AgentVisualStatus>(['working', 'blocked', 'starting']);
 
 const PIXEL = 4;
 
@@ -54,14 +57,16 @@ export function resolveVisualStatus(status: string): AgentVisualStatus {
  * 画板用的 bloub 状态头像。
  * 身体默认用 bloub 的「nuage」云朵形，再按 agent 状态切动画。
  */
-export default function BloubStatusIcon({
+export function BloubStatusIcon({
   status,
   size = 88,
   paper = '#131318',
   className = '',
+  animated = false,
 }: BloubStatusIconProps) {
   const visual = resolveVisualStatus(status);
   const skin = STATUS_SKIN[visual];
+  const shouldAnimate = animated && ANIMATED_STATUSES.has(visual);
   const reactId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const maskId = `bloub-mask-${reactId}`;
   const engineRef = useRef<BotEngine | null>(null);
@@ -105,12 +110,19 @@ export default function BloubStatusIcon({
 
   useEffect(() => {
     if (!visible) return;
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (!shouldAnimate) {
+      setFrame(engine.sample(clockRef.current));
+      return;
+    }
     let raf = 0;
     let last = 0;
+    let lastPaint = 0;
 
     const tick = (ms: number) => {
-      const engine = engineRef.current;
-      if (!engine) {
+      const current = engineRef.current;
+      if (!current) {
         raf = requestAnimationFrame(tick);
         return;
       }
@@ -124,18 +136,21 @@ export default function BloubStatusIcon({
         motionRef.current = next;
         desiredRef.current = next.state;
         holdRef.current = motionHold(next);
-        engine.setExpression(next.expression, clockRef.current);
-        engine.setState(next.state, clockRef.current);
+        current.setExpression(next.expression, clockRef.current);
+        current.setState(next.state, clockRef.current);
         startedAtRef.current = clockRef.current;
       }
 
-      setFrame(engine.sample(clockRef.current));
+      if (ms - lastPaint >= 50) {
+        lastPaint = ms;
+        setFrame(current.sample(clockRef.current));
+      }
       raf = requestAnimationFrame(tick);
     };
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [visible]);
+  }, [shouldAnimate, visible]);
 
   const viewBox = useMemo(
     () => `${-DEMI_VIEWBOX} ${-DEMI_VIEWBOX} ${DEMI_VIEWBOX * 2} ${DEMI_VIEWBOX * 2}`,
@@ -175,6 +190,8 @@ export default function BloubStatusIcon({
     </div>
   );
 }
+
+export default memo(BloubStatusIcon);
 
 function BloubSvg({
   frame,

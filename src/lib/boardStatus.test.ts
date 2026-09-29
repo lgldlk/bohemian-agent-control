@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { iconStatus, resolveStatusAxes } from './boardStatus';
+import { iconStatus, isRunningPhase, projectCardStatus, resolveStatusAxes } from './boardStatus';
 
 describe('resolveStatusAxes', () => {
   it('keeps process, TUI activity, and session record on separate axes', () => {
@@ -30,6 +30,13 @@ describe('resolveStatusAxes', () => {
 });
 
 describe('iconStatus', () => {
+  it('only marks the exact running task as animation-active', () => {
+    expect(isRunningPhase(projectCardStatus({ processState: 'running', activity: 'idle' }).task)).toBe(false);
+    expect(isRunningPhase(projectCardStatus({ processState: 'starting', activity: null }).task)).toBe(false);
+    expect(isRunningPhase(projectCardStatus({ processState: 'running', activity: 'blocked' }).task)).toBe(false);
+    expect(isRunningPhase(projectCardStatus({ processState: 'running', activity: 'working' }).task)).toBe(true);
+  });
+
   it('does not call an open terminal a running task', () => {
     expect(iconStatus(resolveStatusAxes({
       processState: 'running',
@@ -83,6 +90,22 @@ describe('iconStatus', () => {
 
   it('keeps a placeholder pending only when no process has been observed', () => {
     expect(iconStatus(resolveStatusAxes({ record: 'pending' }))).toBe('pending');
+  });
+
+  it('closes a working or blocked turn when the terminal is gone', () => {
+    expect(iconStatus(resolveStatusAxes({
+      processState: 'exited',
+      activity: 'working',
+    }))).toBe('completed');
+    expect(iconStatus(resolveStatusAxes({
+      processState: 'missing',
+      activity: 'blocked',
+    }))).toBe('completed');
+    expect(iconStatus(resolveStatusAxes({
+      processState: 'exited',
+      activity: 'working',
+      record: 'error',
+    }))).toBe('error');
   });
 
   it('does not treat process exit as deletion', () => {

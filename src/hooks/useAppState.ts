@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 export type View = 'board' | 'grid';
 export type AddMode = 'pin' | 'start';
+export interface BoardPoint { x: number; y: number; }
 
 /**
  * 应用状态管理 Hook
@@ -18,14 +19,18 @@ export function useAppState() {
   const [addPresetGroup, setAddPresetGroup] = useState<string | undefined>(undefined);
   const [addMode, setAddMode] = useState<AddMode>('pin');
 
-  const openAddModal = (groupId?: string, mode: AddMode = 'pin') => {
+  const [addPoint, setAddPoint] = useState<BoardPoint | undefined>();
+
+  const openAddModal = (groupId?: string, mode: AddMode = 'pin', point?: BoardPoint) => {
     setAddPresetGroup(groupId);
     setAddMode(mode);
+    setAddPoint(point);
     setAddModalOpen(true);
   };
 
   const closeAddModal = () => {
     setAddModalOpen(false);
+    setAddPoint(undefined);
   };
 
   return {
@@ -37,6 +42,7 @@ export function useAppState() {
     setAddModalOpen,
     addPresetGroup,
     addMode,
+    addPoint,
     openAddModal,
     closeAddModal,
   };

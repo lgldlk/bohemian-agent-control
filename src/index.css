@@ -12,10 +12,33 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 二级画板工具沿用 tldraw 的四列图标网格。 */
+.tl-board-more-tools {
+  touch-action: none;
+}
+
+/* 组标题按屏幕像素绘制。缩放抵消见 groupFrameTitle.ts。 */
+.tldraw-dark-host .tl-frame-heading {
+  --tl-frame-height: 36px;
+  --tl-frame-minimum-width: 72px;
+  max-width: none !important;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
 /* tldraw HTML shape:强制独立合成层,避免首次落入 transform 父级时黑块不绘字 */
 .tldraw-dark-host .tl-html-container {
   transform: translateZ(0);
   isolation: isolate;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+}
+/*
+ * 终端按行分层。上面的 backface-visibility:hidden 会把行间亚像素缝清成 #000。
+ * 只对终端 shape 关掉。不要删，也不要再给 .tl-terminal 加 hidden。
+ */
+.tldraw-dark-host .tl-html-container:has(.tl-terminal) {
+  backface-visibility: visible;
+  -webkit-backface-visibility: visible;
 }

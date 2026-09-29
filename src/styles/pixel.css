@@ -158,6 +158,55 @@ button:disabled {
   background-position: center top;
 }
 
+/* Usage 页面纵向与热力图横向滚动条，共用热力图蓝色系。 */
+.usage-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #1d75c8 #0a0a0d;
+  scrollbar-gutter: stable;
+}
+.usage-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.usage-scrollbar::-webkit-scrollbar-track {
+  background: #0a0a0d;
+  border: 1px solid #1c2633;
+}
+.usage-scrollbar::-webkit-scrollbar-thumb {
+  min-height: 40px;
+  background: #1d75c8;
+  border: 2px solid #0a0a0d;
+  border-radius: 0;
+}
+.usage-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #3294ee;
+}
+.usage-scrollbar::-webkit-scrollbar-corner {
+  background: #0a0a0d;
+}
+
+.settings-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 #0a0a0d;
+  scrollbar-gutter: stable;
+}
+.settings-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.settings-scrollbar::-webkit-scrollbar-track {
+  background: #0a0a0d;
+  border-left: 1px solid #18181b;
+}
+.settings-scrollbar::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  background: #3f3f46;
+  border: 2px solid #0a0a0d;
+}
+.settings-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
 /* tldraw 画布底:纯黑,网格由 PixelGrid 组件随相机平移 */
 .tldraw-dark-host .tl-background {
   background-color: #0a0a0d !important;
@@ -216,10 +265,6 @@ button:disabled {
 }
 
 /* ---- 像素闪烁光标 ---- */
-@keyframes px-attention {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
-}
 @keyframes px-blink {
   0%, 49% { opacity: 1; }
   50%, 100% { opacity: 0; }
@@ -397,11 +442,6 @@ button:disabled {
   color: #71717a;
   font-size: 10px;
 }
-.tl-task-card__attention {
-  flex: 0 0 auto;
-  color: #fbbf24;
-  animation: px-attention 1.2s steps(2) infinite;
-}
 .tl-task-card__preview {
   position: relative;
   height: 22px;
@@ -440,6 +480,26 @@ button:disabled {
   line-height: 1.45;
   color: #f4f4f5;
 }
+.tl-task-card__title-input {
+  display: block;
+  width: 100%;
+  min-height: 2.9em;
+  max-height: 2.9em;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  border: 1px solid #71717a;
+  border-radius: 3px;
+  background: #09090b;
+  padding: 2px 4px;
+  color: #f4f4f5;
+  font: inherit;
+  line-height: 1.45;
+  outline: none;
+}
+.tl-task-card__title-input:focus {
+  border-color: #f4f4f5;
+}
 .tl-task-card__meta {
   flex-shrink: 0;
   height: 20px;
@@ -473,15 +533,11 @@ button:disabled {
   fill: currentColor;
   color: #e4e4e7;
 }
-.model-mark__short {
-  flex-shrink: 0;
-  color: #d4d4d8;
-}
-.model-mark__raw {
+.model-mark__id {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #71717a;
+  color: #d4d4d8;
 }
 .agent-mark {
   display: inline-flex;
@@ -685,6 +741,77 @@ button:disabled {
   justify-content: center;
   font-size: 12px;
   color: #71717a;
+}
+
+.terminal-status-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+  color: #d4d4d8;
+  text-shadow: 0 1px 0 #000;
+}
+.terminal-status-overlay.is-transient {
+  background: radial-gradient(circle at center, rgba(9, 9, 11, 0.14), rgba(9, 9, 11, 0.72));
+}
+.terminal-status-overlay.is-compact {
+  inset: auto 8px 8px auto;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 4px 7px;
+  border: 1px solid rgba(82, 82, 91, 0.8);
+  background: rgba(9, 9, 11, 0.86);
+}
+.terminal-status-overlay.is-active {
+  border-color: rgba(52, 211, 153, 0.6);
+  color: #a7f3d0;
+}
+.terminal-status-overlay.is-error {
+  border-color: rgba(248, 113, 113, 0.72);
+  color: #fecaca;
+}
+.terminal-status-overlay__face {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(18px, 2.6vw, 30px);
+  line-height: 1;
+  white-space: nowrap;
+}
+.terminal-status-overlay.is-compact .terminal-status-overlay__face {
+  font-size: 13px;
+}
+.terminal-status-overlay.is-transient .terminal-status-overlay__face {
+  animation: terminal-status-breathe 1.4s ease-in-out infinite;
+}
+.terminal-status-overlay.is-static .terminal-status-overlay__face {
+  animation: none;
+}
+.terminal-status-overlay__copy {
+  min-width: 0;
+  max-width: min(56%, 280px);
+}
+.terminal-status-overlay__label {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.terminal-status-overlay__message {
+  margin-top: 6px;
+  overflow: hidden;
+  color: #a1a1aa;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@keyframes terminal-status-breathe {
+  0%, 100% { transform: translateY(0); opacity: 0.72; }
+  50% { transform: translateY(-3px); opacity: 1; }
 }
 
 /* ---- tldraw UI 变量:挂在 .tl-theme__* 上才会生效 ---- */

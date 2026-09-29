@@ -17,6 +17,25 @@ describe('terminal scrollback cache', () => {
     expect(text).toBe('old\nolder');
   });
 
+  it('captures normal history while the alternate buffer is active', () => {
+    const text = captureRenderedScrollback({
+      rows: 2,
+      buffer: {
+        normal: {
+          length: 5,
+          baseY: 3,
+          getLine: (index) => ({ translateToString: () => ['one', 'two', 'three'][index] ?? '' }),
+        },
+        active: {
+          length: 2,
+          baseY: 0,
+          getLine: () => ({ translateToString: () => 'alternate' }),
+        },
+      },
+    });
+    expect(text).toBe('one\ntwo\nthree');
+  });
+
   it('puts cached history above a raw snapshot without dropping the snapshot', () => {
     expect(prependScrollback('one\ntwo\n', 'screen')).toBe('one\r\ntwo\r\nscreen');
     expect(prependScrollback('   ', 'screen')).toBe('screen');

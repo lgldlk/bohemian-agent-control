@@ -8,7 +8,31 @@ export interface TerminalSession {
   info: TerminalInfo;
 }
 
-/** React state bridge for the server-owned terminal inventory. */
+function terminalInventoryKey(info: TerminalInfo): string {
+  return JSON.stringify([
+    info.id,
+    info.nodeId,
+    info.launchId,
+    info.agentKind,
+    info.startupCommand,
+    info.launchToken,
+    info.startupCommandDelivery,
+    info.startupStatus,
+    info.incarnationId,
+    info.title,
+    info.cwd,
+    info.shell,
+    info.pid,
+    info.status,
+    info.agentSessionId,
+    info.exitCode,
+    info.alternateScreen,
+    info.size.cols,
+    info.size.rows,
+  ]);
+}
+
+
 export function useTerminalManager(client: TerminalClient) {
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
   const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
@@ -33,10 +57,14 @@ export function useTerminalManager(client: TerminalClient) {
     const unsubscribeEvents = client.subscribeToEvents((event) => {
       if (event.type === 'created' || event.type === 'updated') {
         const info = event.terminal;
-        setTerminals((current) => [
-          ...current.filter((terminal) => terminal.id !== info.id),
-          { id: info.id, nodeId: info.nodeId, info },
-        ].sort((a, b) => b.info.updatedAt - a.info.updatedAt));
+        setTerminals((current) => {
+          const previous = current.find((terminal) => terminal.id === info.id);
+          if (previous && terminalInventoryKey(previous.info) === terminalInventoryKey(info)) return current;
+          return [
+            ...current.filter((terminal) => terminal.id !== info.id),
+            { id: info.id, nodeId: info.nodeId, info },
+          ].sort((a, b) => b.info.updatedAt - a.info.updatedAt);
+        });
       } else if (event.type === 'closed') {
         setTerminals((current) => current.filter((terminal) => terminal.id !== event.terminalId));
         setActiveTerminalId((active) => active === event.terminalId ? null : active);

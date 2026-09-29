@@ -1,10 +1,9 @@
 /**
- * Keep the board terminal on xterm's normal buffer.
- * Alternate-screen switches hide that buffer, so its scrollbar disappears.
- * CSI 3 J erases the same history when a resize redraws.
- * A cursor-addressed repaint ends each row with CR LF. In the normal buffer
- * that line feed scrolls the current row into history, leaving a blank gap
- * above the text. Shell newlines that happen before any row;col address stay.
+ * Not used by the live terminal. Do not put it back on the write path.
+ * Dropping alternate-screen switches forces a TUI repaint onto the normal
+ * buffer. A cursor-addressed row that ends in CR LF then scrolls into history
+ * and leaves a blank gap or stale cells. Orca keeps those switches and lets
+ * xterm paint the alternate buffer.
  */
 const DROPPED_SCREEN_SEQUENCES = [
   '\u001b[?1049h',

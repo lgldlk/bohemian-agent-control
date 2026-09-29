@@ -7,7 +7,7 @@ import {
 
 function terminal(viewportY: number, baseY: number) {
   return {
-    buffer: { active: { viewportY, baseY } },
+    buffer: { active: { viewportY, baseY, length: 0, getLine: () => undefined as { translateToString(trimRight: boolean): string } | undefined } },
     scrollToLine: vi.fn(),
     scrollLines: vi.fn(),
   };
@@ -23,7 +23,7 @@ describe('terminal scroll intent', () => {
     const before = captureTerminalScrollIntent(terminal(12, 80));
     const after = terminal(100, 100);
     expect(restoreTerminalScrollIntentAfterOutput(after, before)).toBe(true);
-    expect(after.scrollToLine).toHaveBeenCalledWith(12);
+    expect(after.scrollToLine).toHaveBeenCalledWith(12, true);
   });
 
   it('does not fight a newer user scroll during output parsing', () => {
@@ -37,6 +37,25 @@ describe('terminal scroll intent', () => {
     const before = captureTerminalScrollIntent(terminal(12, 80));
     const after = terminal(0, 100);
     expect(restoreTerminalScrollIntentAfterStructure(after, before)).toBe(true);
-    expect(after.scrollToLine).toHaveBeenCalledWith(32);
+    expect(after.scrollToLine).toHaveBeenCalledWith(32, true);
+  });
+
+  it('prefers a logical line marker after structural reflow', () => {
+    const before = captureTerminalScrollIntent({
+      buffer: {
+        active: {
+          viewportY: 12,
+          baseY: 80,
+          getLine: () => ({ translateToString: () => 'stable line' }),
+        },
+      },
+    });
+    const after = terminal(0, 100);
+    after.buffer.active.length = 101;
+    after.buffer.active.getLine = (index: number) => (
+      index === 40 ? { translateToString: () => 'stable line' } : undefined
+    );
+    expect(restoreTerminalScrollIntentAfterStructure(after, before)).toBe(true);
+    expect(after.scrollToLine).toHaveBeenCalledWith(40, true);
   });
 });

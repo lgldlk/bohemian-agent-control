@@ -18,6 +18,7 @@ import {
   TerminalHistoryPanel,
   updateSplitRatio,
   useTerminalManager,
+  createDebouncedTask,
   type TerminalSplitDirection,
 } from '@bohemian/terminal-ui';
 import {
@@ -118,14 +119,15 @@ export const CanvasTerminalIntegration = forwardRef<
 
   useEffect(() => {
     if (!reconciledRef.current) return;
-    const timeout = setTimeout(() => {
+    const persist = createDebouncedTask(120);
+    persist.schedule(() => {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(terminalWindows));
       } catch {
         // Layout persistence is best-effort; PTY state is independently persisted by the server.
       }
-    }, 120);
-    return () => clearTimeout(timeout);
+    });
+    return () => persist.cancel();
   }, [terminalWindows]);
 
   const updateWindow = useCallback((id: string, patch: Partial<CanvasTerminalWindowState>) => {

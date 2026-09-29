@@ -92,8 +92,12 @@ function queueTuiReports(
     state.event = null;
     state.reports = 0;
     if (!source || !terminal.element || terminal.modes.mouseTrackingMode === 'none') return;
+    // xterm binds its wheel listener to the screen element in some releases
+    // and to the terminal root in others. Dispatch on the screen when it is
+    // present so the event bubbles through both layouts.
+    const target = terminal.element.querySelector<HTMLElement>('.xterm-screen') ?? terminal.element;
     for (let index = 0; index < count; index += 1) {
-      terminal.element.dispatchEvent(replayTuiWheelEvent(source));
+      target.dispatchEvent(replayTuiWheelEvent(source));
     }
   });
 }
@@ -101,17 +105,21 @@ function queueTuiReports(
 export type WheelAction = 'tui-report' | 'local-scroll' | 'page-up' | 'page-down' | 'block';
 
 export function resolveWheelAction(state: WheelTerminalState, deltaY: number): WheelAction {
-  // History in the normal buffer is the scrollbar. Scroll that before any TUI
-  // mouse report, or the wheel never moves the thumb.
-  if (state.bufferType !== 'alternate' && state.hasScrollback) return 'local-scroll';
+  // Let xterm own normal-buffer scrolling even when its public baseY briefly
+  // lags the rendered line store during a resize. scrollLines is a no-op when
+  // there is genuinely no history, but gating it on baseY makes real history
+  // unreachable during that transient.
+  if (state.bufferType !== 'alternate') return 'local-scroll';
   if (state.bufferType === 'alternate') return deltaY < 0 ? 'page-up' : 'page-down';
   if (state.mouseTrackingMode !== 'none') return 'tui-report';
   return 'block';
 }
 
 export function shouldForwardWheelToPty(state: WheelTerminalState): boolean {
-  if (state.bufferType !== 'alternate' && state.hasScrollback) return false;
-  return state.mouseTrackingMode !== 'none';
+  // Pi's regular TUI owns a real scroll view and receives wheel events as
+  // SGR mouse reports. Keep that path for alternate-screen applications;
+  // normal-buffer history remains local to xterm.
+  return state.bufferType === 'alternate' && state.mouseTrackingMode !== 'none';
 }
 
 export function consumeTerminalWheel(
@@ -148,6 +156,7 @@ type WheelTerminal = {
 
 type WheelControllerOptions = {
   writeInput?: (data: string) => void;
+  onUserScroll?: () => void;
 };
 
 function stateOf(terminal: WheelTerminal): WheelTerminalState {
@@ -165,11 +174,16 @@ function handleWheel(
   tuiState: TuiWheelState,
   tuiReplay: TuiReplayState,
 ): void {
-  const state = stateOf(terminal);
   const replayed = (event as ReplayedWheelEvent)[REPLAYED_TUI_WHEEL] === true;
-  if (!replayed && state.bufferType === 'alternate' && state.mouseTrackingMode !== 'none' && !event.shiftKey) {
+  const marked = event as WheelEvent & { [HANDLED]?: boolean };
+  if (replayed || marked[HANDLED]) return;
+
+  options.onUserScroll?.();
+  const state = stateOf(terminal);
+  if (state.bufferType === 'alternate' && state.mouseTrackingMode !== 'none' && !event.shiftKey) {
     const reports = resolveTuiReportCount(event, terminal, tuiState);
     if (reports > 0) {
+      marked[HANDLED] = true;
       event.preventDefault();
       event.stopPropagation();
       queueTuiReports(terminal, event, reports, tuiReplay);
@@ -200,15 +214,35 @@ export function attachTerminalWheelController(
   const tuiState: TuiWheelState = { pendingRows: 0 };
   const tuiReplay: TuiReplayState = { scheduled: false, event: null, reports: 0 };
   const onWheel = (event: WheelEvent) => handleWheel(terminal, event, options, tuiState, tuiReplay);
+  const onScrollbarPointerDown = (event: PointerEvent) => {
+    if ((event.target as Element | null)?.closest('.xterm-scrollbar')) options.onUserScroll?.();
+  };
   terminal.attachCustomWheelEventHandler((event) => {
+    if ((event as WheelEvent & { [HANDLED]?: boolean })[HANDLED]) return false;
     if (shouldForwardWheelToPty(stateOf(terminal))) return true;
     handleWheel(terminal, event, options, tuiState, tuiReplay);
     return false;
   });
   root.addEventListener('wheel', onWheel, { capture: true, passive: false });
+  root.addEventListener('pointerdown', onScrollbarPointerDown, { capture: true });
   terminal.element?.addEventListener('wheel', onWheel, { capture: true, passive: false });
+  // tldraw installs a document-level wheel gesture handler. A terminal nested
+  // in an HTML shape can otherwise lose the event before it reaches the xterm
+  // viewport. Window capture runs first; the HANDLED marker prevents the
+  // inner listeners from processing the same event twice.
+  const onWindowWheel = (event: WheelEvent) => {
+    const target = event.target;
+    if (target instanceof Node && root.contains(target)) onWheel(event);
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('wheel', onWindowWheel, { capture: true, passive: false });
+  }
   return () => {
     root.removeEventListener('wheel', onWheel, true);
+    root.removeEventListener('pointerdown', onScrollbarPointerDown, true);
     terminal.element?.removeEventListener('wheel', onWheel, true);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('wheel', onWindowWheel, true);
+    }
   };
 }

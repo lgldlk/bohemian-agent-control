@@ -4,6 +4,14 @@ import type { ITerminalOptions, ITheme } from '@xterm/xterm';
 export const TERMINAL_SCROLLBACK_ROWS = 5_000;
 export const TERMINAL_SCROLL_SENSITIVITY = 1.15;
 export const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
+/**
+ * WebGL rasterizes glyphs into a texture atlas. A light 300-weight font loses
+ * stem contrast in that atlas, especially when a board shape is CSS-scaled.
+ * Keep the default at regular weight so the WebGL and DOM renderers have the
+ * same readable baseline.
+ */
+export const TERMINAL_FONT_WEIGHT = '400' as const;
+export const TERMINAL_FONT_WEIGHT_BOLD = '600' as const;
 
 export function terminalMinimumContrast(background: string | undefined): number {
   if (!background) return 1;
@@ -30,8 +38,8 @@ export function buildTerminalOptions(input: {
     cursorInactiveStyle: input.cursorStyle === 'block' ? 'outline' : input.cursorStyle,
     fontFamily: input.fontFamily,
     fontSize: input.fontSize,
-    fontWeight: '300',
-    fontWeightBold: '500',
+    fontWeight: TERMINAL_FONT_WEIGHT,
+    fontWeightBold: TERMINAL_FONT_WEIGHT_BOLD,
     lineHeight: 1,
     letterSpacing: 0,
     scrollback: TERMINAL_SCROLLBACK_ROWS,

@@ -6,7 +6,7 @@ export type TerminalOutputJob = {
   isActive: () => boolean
 }
 
-class TerminalOutputScheduler {
+export class TerminalOutputScheduler {
   private readonly jobs = new Map<string, TerminalOutputJob>()
   private scheduled = false
 

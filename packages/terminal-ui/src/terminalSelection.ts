@@ -1,10 +1,10 @@
 /**
  * Drag selection for an embedded terminal.
  *
- * xterm maps mouse position through its own cell size. Inside a transformed
- * tldraw shape that size does not match the painted canvas, so the highlight
- * lands on the wrong row. This module hits the canvas box directly and writes
- * the selection itself.
+ * xterm maps mouse events through the unscaled screen box. Inside a transformed
+ * tldraw shape that size does not match the painted terminal, so the highlight
+ * lands on the wrong row. This module hits the xterm screen box directly and
+ * writes the selection itself.
  */
 
 export interface SelectionPoint {
@@ -12,7 +12,7 @@ export interface SelectionPoint {
   row: number;
 }
 
-export function cellFromCanvasPoint(
+export function cellFromScreenPoint(
   clientX: number,
   clientY: number,
   rect: { left: number; top: number; width: number; height: number },
@@ -50,13 +50,6 @@ type SelectionTerminal = {
   clearSelection(): void;
 };
 
-/** The painted glyph sits one row above the raw hit. Keep the highlight on the text. */
-const SELECTION_ROW_BIAS = -1;
-
-function selectionRow(row: number, rows: number): number {
-  return Math.min(rows - 1, Math.max(0, row + SELECTION_ROW_BIAS));
-}
-
 function selectionModel(terminal: SelectionTerminal): { model: SelectionModel; refresh: () => void } | null {
   const core = (terminal as SelectionTerminal & {
     _core?: { _selectionService?: { _model?: SelectionModel; refresh?: (force?: boolean) => void } };
@@ -75,8 +68,10 @@ export function applyTerminalSelection(
   const target = selectionModel(terminal);
   if (!target) return;
   target.model.isSelectAllActive = false;
-  const startRow = selectionRow(anchor.row, terminal.rows);
-  const endRow = selectionRow(current.row, terminal.rows);
+  // Hit-testing already uses the painted screen box. Do not subtract a row here:
+  // a fixed -1 bias highlights the line above the glyphs.
+  const startRow = Math.min(terminal.rows - 1, Math.max(0, anchor.row));
+  const endRow = Math.min(terminal.rows - 1, Math.max(0, current.row));
   target.model.selectionStart = [anchor.col, startRow + viewportY];
   target.model.selectionStartLength = 0;
   target.model.selectionEnd = [Math.min(terminal.cols, current.col + 1), endRow + viewportY];
@@ -87,27 +82,25 @@ export function attachTerminalTextSelection(root: HTMLElement, terminal: Selecti
   let anchor: SelectionPoint | null = null;
   let dragging = false;
 
-  const paintedCanvas = () => {
-    const canvases = [...root.querySelectorAll('.xterm-screen canvas')].filter(
-      (node): node is HTMLCanvasElement => node instanceof HTMLCanvasElement && node.offsetHeight > 0,
-    );
-    return canvases.sort((a, b) => b.offsetHeight - a.offsetHeight)[0] ?? null;
+  const paintedScreen = () => {
+    const screen = root.querySelector('.xterm-screen');
+    return screen instanceof HTMLElement && screen.offsetHeight > 0 ? screen : null;
   };
 
   const pointAt = (event: MouseEvent): SelectionPoint | null => {
-    const painted = paintedCanvas();
-    if (!painted) return null;
+    const screen = paintedScreen();
+    if (!screen) return null;
     const size = (terminal as SelectionTerminal & {
       _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } };
     })._core?._renderService?.dimensions?.css?.cell;
-    return cellFromCanvasPoint(
+    return cellFromScreenPoint(
       event.clientX,
       event.clientY,
-      painted.getBoundingClientRect(),
+      screen.getBoundingClientRect(),
       terminal.cols,
       terminal.rows,
       size && size.width > 0 && size.height > 0
-        ? { ...size, offsetWidth: painted.offsetWidth, offsetHeight: painted.offsetHeight }
+        ? { ...size, offsetWidth: screen.offsetWidth, offsetHeight: screen.offsetHeight }
         : undefined,
     );
   };

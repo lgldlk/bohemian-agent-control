@@ -38,9 +38,9 @@ export function attachTerminalPaste(root: HTMLElement, write: (data: string) => 
     event.stopImmediatePropagation();
     skipRawPaste = true;
     write(formatAgentPaste(text));
-    window.setTimeout(() => {
+    queueMicrotask(() => {
       skipRawPaste = false;
-    }, 0);
+    });
   };
   const prepareInput = (data: string): string | null => {
     if (skipRawPaste && /[\r\n]/.test(data) && data !== '\r' && data !== '\n') return null;

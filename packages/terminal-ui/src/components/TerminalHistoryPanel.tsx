@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import type { TerminalClient } from '@bohemian/terminal-client';
 import type { TerminalHistoryEntry, TerminalSearchMatch } from '@bohemian/terminal-protocol';
+import { createDebouncedTask } from '../timing';
 
 export function TerminalHistoryPanel({
   client,
@@ -19,7 +20,8 @@ export function TerminalHistoryPanel({
 
   useEffect(() => {
     let cancelled = false;
-    const timer = setTimeout(() => {
+    const search = createDebouncedTask(180);
+    search.schedule(() => {
       void (async () => {
         try {
           if (query.trim()) {
@@ -38,10 +40,10 @@ export function TerminalHistoryPanel({
           if (!cancelled) setError(cause instanceof Error ? cause.message : 'Search failed');
         }
       })();
-    }, 180);
+    });
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      search.cancel();
     };
   }, [client, query]);
 

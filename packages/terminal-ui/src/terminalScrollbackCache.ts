@@ -8,11 +8,18 @@
  */
 
 const PREFIX = 'bac-terminal-scrollback:v1:';
-const MAX_CHARS = 400_000;
+// Keep hydration responsive. The server snapshot already contains the current
+// screen; this cache only needs a modest tail of rendered normal-buffer lines.
+const MAX_CHARS = 120_000;
 
 export interface ScrollbackTerminal {
   rows: number;
   buffer: {
+    normal?: {
+      length: number;
+      baseY: number;
+      getLine(index: number): { translateToString(trimRight: boolean): string } | undefined;
+    };
     active: {
       length: number;
       baseY: number;
@@ -22,7 +29,10 @@ export interface ScrollbackTerminal {
 }
 
 export function captureRenderedScrollback(terminal: ScrollbackTerminal): string {
-  const buffer = terminal.buffer.active;
+  // The normal buffer owns the scrollbar even while a fullscreen program is
+  // painting the alternate buffer. Falling back to active keeps this helper
+  // useful with the small test doubles used by the package tests.
+  const buffer = terminal.buffer.normal ?? terminal.buffer.active;
   const lines: string[] = [];
   const historyEnd = Math.max(0, Math.min(buffer.baseY, buffer.length));
   for (let i = 0; i < historyEnd; i += 1) {

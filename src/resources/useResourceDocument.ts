@@ -6,15 +6,23 @@ import { boardResourceProviderCapabilities } from './resourceApi';
 
 export type ResourceDocumentState =
   | { status: 'loading' }
+  | { status: 'deferred' }
   | { status: 'ready'; document: BoardResourceDocument }
   | { status: 'error'; error: string };
 
-export function useResourceDocument(resource: TerminalResourceRef): ResourceDocumentState {
+export function useResourceDocument(
+  resource: TerminalResourceRef,
+  defer = false,
+): ResourceDocumentState {
   const [state, setState] = useState<ResourceDocumentState>({ status: 'loading' });
   const provider = findBoardResourceProvider(resource);
 
   useEffect(() => {
     const controller = new AbortController();
+    if (options.defer) {
+      setState({ status: 'deferred' });
+      return () => controller.abort();
+    }
     setState({ status: 'loading' });
     if (!provider) {
       setState({ status: 'error', error: 'No resource provider is available.' });
@@ -31,7 +39,7 @@ export function useResourceDocument(resource: TerminalResourceRef): ResourceDocu
         }
       });
     return () => controller.abort();
-  }, [provider, resource]);
+  }, [provider, resource, options.defer]);
 
   return state;
 }

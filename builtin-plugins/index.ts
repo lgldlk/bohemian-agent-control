@@ -5,6 +5,7 @@ import { kaomojiUiPlugin } from './terminalStatus/plugin';
 import { localFilePlugin } from './localFile/plugin';
 import { webUrlPlugin } from './webUrl/plugin';
 import { terminalPerformancePlugin } from './terminalPerformance/plugin';
+import { resourcePerformancePlugin } from './resourcePerformance/plugin';
 
 let ready = false;
 
@@ -18,6 +19,7 @@ export function ensureBoardPlugins(): void {
     localFilePlugin,
     webUrlPlugin,
     terminalPerformancePlugin,
+    resourcePerformancePlugin,
   ]) {
     registerBoardPlugin(plugin);
     installBoardPluginTranslations(plugin);

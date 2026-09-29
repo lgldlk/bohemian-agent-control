@@ -25,6 +25,10 @@ export function errorMiddleware(log: Logger) {
       res.status(err.status).json({ success: false, error: err.message, code: err.code });
       return;
     }
+    if (typeof err === 'object' && err !== null && 'type' in err && err.type === 'entity.too.large') {
+      res.status(413).json({ success: false, error: '文件过大，无法导入', code: 'file_too_large' });
+      return;
+    }
     log.error('unhandled', err);
     res.status(500).json({ success: false, error: 'internal error', code: 'internal' });
   };

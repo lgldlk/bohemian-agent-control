@@ -7,6 +7,7 @@ export * from './types';
 export * from './agentStatus';
 export * from './binaryFrame';
 export * from './providerStatus';
+export * from './resources';
 export {
   createOscTitleParser,
   detectAgentActivity,

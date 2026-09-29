@@ -20,10 +20,16 @@ export interface ParsedAgentStatus {
   toolInput?: string;
   lastAssistantMessage?: string;
   providerSessionId?: string;
+  /** Normalized provider hook event, for diagnostics and stale-event handling. */
+  providerEvent?: string;
+  /** Provider-specific SessionStart source such as startup, resume, clear, fork or compact. */
+  sessionSource?: string;
+  /** True only when this event intentionally changes the terminal's active topic identity. */
+  sessionTransition?: boolean;
 }
 
 export interface TerminalAgentStatusDetail extends ParsedAgentStatus {
-  origin: 'osc' | 'title' | 'hook';
+  origin: 'osc' | 'title' | 'hook' | 'journal' | 'screen';
   observedAt: number;
 }
 
@@ -55,6 +61,9 @@ function parsePayload(raw: string): ParsedAgentStatus | null {
       toolInput: validString(value.toolInput, 2_000),
       lastAssistantMessage: validString(value.lastAssistantMessage, 8_000),
       providerSessionId: validString(value.providerSessionId, 512),
+      providerEvent: validString(value.providerEvent, 120),
+      sessionSource: validString(value.sessionSource, 120),
+      sessionTransition: value.sessionTransition === true ? true : undefined,
     };
   } catch {
     return null;

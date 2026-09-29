@@ -10,6 +10,20 @@ describe('createAgentStatusParser', () => {
     });
   });
 
+  it('keeps provider topic-transition metadata', () => {
+    const parse = createAgentStatusParser();
+    expect(parse('\x1b]9999;{"state":"done","providerSessionId":"session-b","providerEvent":"sessionstart","sessionSource":"resume","sessionTransition":true}\x07')).toEqual({
+      cleanData: '',
+      payloads: [{
+        state: 'done',
+        providerSessionId: 'session-b',
+        providerEvent: 'sessionstart',
+        sessionSource: 'resume',
+        sessionTransition: true,
+      }],
+    });
+  });
+
   it('keeps split markers and payloads across chunks', () => {
     const parse = createAgentStatusParser();
     expect(parse('before\x1b]999')).toEqual({ cleanData: 'before', payloads: [] });

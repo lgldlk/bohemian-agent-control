@@ -1,0 +1,78 @@
+import type { BoardPluginTranslations } from '@/plugin-system';
+
+/** Plugin-owned copy. Keeping it beside the plugin prevents host locale drift. */
+export const kaomojiUiTranslations: BoardPluginTranslations = {
+  'zh-CN': {
+    terminalStatus: {
+      title: '终端状态',
+      loading: { label: '正在加载', message: '终端界面正在准备…' },
+      connecting: { label: '正在连接', message: '正在连接本地终端服务…' },
+      hydrating: { label: '恢复现场', message: '正在恢复终端画面和历史输出…' },
+      ready: { label: '已就绪', message: '终端已准备好' },
+      reconnecting: { label: '重新连接', message: '连接中断，正在重试…' },
+      missing: { label: '终端缺失', message: '找不到对应的终端会话' },
+      exited: { label: '进程已退出', message: '终端进程已经结束' },
+      error: { label: '终端出错', message: '终端初始化失败' },
+      working: { label: '处理中' },
+      blocked: { label: '等待确认' },
+      idle: { label: '空闲' },
+      starting: { label: '启动中' },
+      running: { label: '运行中' },
+      pending: { label: '等待中' },
+      completed: { label: '已完成' },
+      deleted: { label: '已删除' },
+      unknown: { label: '未知状态' },
+    },
+    kaomojiUi: {
+      title: '颜文字 UI',
+      settings: {
+        title: '颜文字 UI',
+        enabled: '启用状态提示',
+        enabledHint: '显示终端加载、重连、错误和阻塞状态。',
+        showMessage: '显示解释文字',
+        showMessageHint: '在颜文字旁显示正在发生什么。',
+        showLabel: '显示状态标题',
+        showLabelHint: '显示“正在连接”“终端出错”等短标题。',
+        animate: '启用呼吸动画',
+        animateHint: '让加载和重连颜文字轻微动起来。',
+      },
+    },
+  },
+  en: {
+    terminalStatus: {
+      title: 'Terminal status',
+      loading: { label: 'Loading', message: 'Preparing the terminal surface…' },
+      connecting: { label: 'Connecting', message: 'Connecting to the local terminal service…' },
+      hydrating: { label: 'Restoring', message: 'Restoring the terminal screen and scrollback…' },
+      ready: { label: 'Ready', message: 'Terminal is ready' },
+      reconnecting: { label: 'Reconnecting', message: 'Connection dropped. Retrying…' },
+      missing: { label: 'Terminal missing', message: 'The terminal session is no longer available' },
+      exited: { label: 'Process exited', message: 'The terminal process has ended' },
+      error: { label: 'Terminal error', message: 'Terminal initialization failed' },
+      working: { label: 'Working' },
+      blocked: { label: 'Needs confirmation' },
+      idle: { label: 'Idle' },
+      starting: { label: 'Starting' },
+      running: { label: 'Running' },
+      pending: { label: 'Pending' },
+      completed: { label: 'Completed' },
+      deleted: { label: 'Deleted' },
+      unknown: { label: 'Unknown state' },
+    },
+    kaomojiUi: {
+      title: 'Kaomoji UI',
+      settings: {
+        title: 'Kaomoji UI',
+        enabled: 'Enable status hints',
+        enabledHint: 'Show loading, reconnecting, error, and blocked states.',
+        showMessage: 'Show explanation text',
+        showMessageHint: 'Explain what the terminal is doing beside the kaomoji.',
+        showLabel: 'Show status label',
+        showLabelHint: 'Show short labels such as “Connecting” or “Terminal error”.',
+        animate: 'Enable breathing animation',
+        animateHint: 'Give loading and reconnecting faces a subtle motion.',
+      },
+    },
+  },
+};
+

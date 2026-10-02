@@ -25,7 +25,7 @@ Different AI tools mean different apps, different terminals, constant context sw
 
 ```bash
 pnpm install
-./scripts/dev-all.sh
+pnpm dev
 ```
 
 Visit [http://localhost:18720](http://localhost:18720)

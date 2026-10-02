@@ -27,7 +27,7 @@
 
 ```bash
 pnpm install
-./scripts/dev-all.sh
+pnpm dev
 ```
 
 访问 [http://localhost:18720](http://localhost:18720)

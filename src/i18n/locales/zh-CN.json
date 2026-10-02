@@ -206,6 +206,8 @@
     "loadingFolders": "正在加载文件夹…",
     "loadingFolder": "正在打开文件夹…",
     "startWith": "开始 {{agent}}",
+    "starting": "正在启动…",
+    "startFailed": "Agent 启动失败，请检查工作目录和终端服务后重试。",
     "intro": "新对话总是挂在一个工作区(文件夹)上。Agent 从这里读文件、跑命令。",
     "workspace": "工作区",
     "favorites": "收藏",

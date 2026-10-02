@@ -34,7 +34,7 @@ interface SpaceAddModalProps {
   hintCwd?: string;
   onClose: () => void;
   onCreateGroup: (name: string) => void;
-  onStart: (cwd: string, agentKind: AgentKindId, groupId?: string) => void;
+  onStart: (cwd: string, agentKind: AgentKindId, groupId?: string) => Promise<void>;
 }
 
 interface WorkspaceRow {
@@ -80,6 +80,8 @@ export default function SpaceAddModal({
   const [browseLoading, setBrowseLoading] = useState(false);
   const [groupNameOpen, setGroupNameOpen] = useState(false);
   const [groupNameDraft, setGroupNameDraft] = useState('');
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -90,7 +92,7 @@ export default function SpaceAddModal({
     setTargetGroup(presetGroupId ?? groups[0]?.id);
     setCwdDraft(hintCwd || lastUsed || '');
     setAgentKind(loadLastAgent());
-  }, [open, presetGroupId, mode, hintCwd, lastUsed, groups]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -172,11 +174,20 @@ export default function SpaceAddModal({
     setGroupNameOpen(false);
   };
 
-  const startHere = () => {
+  const startHere = async () => {
     const cwd = cwdDraft.trim();
-    if (!cwd || !agentKind) return;
+    if (!cwd || !agentKind || starting) return;
+    setStarting(true);
+    setStartError('');
     saveLastAgent(agentKind);
-    onStart(cwd, agentKind, targetGroup);
+    try {
+      await onStart(cwd, agentKind, targetGroup);
+    } catch (error) {
+      console.error('[AgentLaunch] failed to start Agent', error);
+      setStartError(t('add.startFailed'));
+    } finally {
+      setStarting(false);
+    }
   };
 
   if (!open || typeof document === 'undefined') return null;
@@ -365,15 +376,18 @@ export default function SpaceAddModal({
               />
             </div>
             <div className="shrink-0 border-t border-zinc-800 p-3">
+              {startError ? <p role="alert" className="mb-2 text-xs text-red-300">{startError}</p> : null}
               <button
                 type="button"
-                disabled={!cwdDraft.trim() || !agentKind}
-                onClick={startHere}
+                disabled={!cwdDraft.trim() || !agentKind || starting}
+                onClick={() => void startHere()}
                 className="w-full bg-white px-2 py-2.5 text-[13px] font-medium text-black hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
               >
-                {t('add.startWith', {
-                  agent: t(`add.agents.${agentKind === 'claude-code' ? 'claudeCode' : agentKind}`),
-                })}
+                {starting
+                  ? t('add.starting')
+                  : t('add.startWith', {
+                    agent: t(`add.agents.${agentKind === 'claude-code' ? 'claudeCode' : agentKind}`),
+                  })}
               </button>
             </div>
           </div>

@@ -206,6 +206,8 @@
     "loadingFolders": "Loading folders…",
     "loadingFolder": "Opening folder…",
     "startWith": "Start {{agent}}",
+    "starting": "Starting…",
+    "startFailed": "Could not start the Agent. Check the working folder and terminal service, then retry.",
     "intro": "A new thread always lives in a workspace (folder). The agent reads files and runs commands from there.",
     "workspace": "Workspace",
     "favorites": "Favorites",

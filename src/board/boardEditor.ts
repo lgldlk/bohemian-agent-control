@@ -24,6 +24,41 @@ export function getBoardEditor(): Editor | null {
   return boardEditor;
 }
 
+/** Resolve only after the requested board page is active in the mounted editor. */
+export function waitForBoardEditorPage(boardId: string): Promise<Editor> {
+  return new Promise((resolve) => {
+    let watchedEditor: Editor | null = null;
+    let stopPageListener: (() => void) | null = null;
+    let finished = false;
+    let stopEditorListener = () => {};
+
+    const finish = (editor: Editor) => {
+      if (finished) return;
+      finished = true;
+      stopEditorListener();
+      stopPageListener?.();
+      resolve(editor);
+    };
+
+    const inspect = () => {
+      if (finished) return;
+      const editor = boardEditor;
+      if (editor !== watchedEditor) {
+        stopPageListener?.();
+        stopPageListener = null;
+        watchedEditor = editor;
+        if (editor) {
+          stopPageListener = editor.store.listen(() => inspect(), { scope: 'document' });
+        }
+      }
+      if (editor && editor.getCurrentPageId() === boardId) finish(editor);
+    };
+
+    stopEditorListener = subscribeBoardEditor(inspect);
+    inspect();
+  });
+}
+
 export function focusTaskShape(taskId: string): void {
   pendingFocusTaskId = taskId;
   const editor = boardEditor;

@@ -127,8 +127,8 @@ export default function App() {
     closeAddModal();
   }
 
-  function handleStartThread(cwd: string, agentKind: string, groupId?: string): void {
-    startThread(cwd, groupId, agentKind);
+  async function handleStartThread(cwd: string, agentKind: string, groupId?: string): Promise<void> {
+    await startThread(cwd, groupId, agentKind);
     closeAddModal();
   }
 

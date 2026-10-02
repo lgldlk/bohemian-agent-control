@@ -24,7 +24,7 @@ Canvas terminals use three presentation states derived from tldraw visibility, c
 
 - `hot`: the focused visible terminal. It receives the highest scheduler priority and may hold a WebGL lease.
 - `warm`: a visible background terminal. It keeps the emulator available but is lower priority than hot output.
-- `cold`: a culled, hidden, parked, or too-small terminal. Its output subscription is paused through the existing server pause/resume contract and it hydrates from a snapshot when it returns.
+- `cold`: a culled, hidden, parked, or too-small terminal. Its output attachment is detached and local rendering is suspended; PTY execution and server snapshot capture continue. When it returns, a fresh output attachment is established before snapshot hydration.
 
 The policy is implemented in `terminalPresentation.ts`. It must not change PTY or Agent identity. tldraw may keep a culled HTML shape mounted with `display: none`; the presentation policy still has to suspend its terminal output work. WebGL is leased globally and is limited to a small number of hot terminals. Terminals without a lease use xterm's DOM renderer.
 
@@ -118,6 +118,20 @@ Selection uses xterm's own cell coordinate system. CSS transforms and fit change
 tldraw handles Escape during the capture phase to exit shape editing before xterm's textarea receives it. While a terminal is focused, `terminalKeyInput.ts` forwards plain Escape directly as byte `0x1B` and stops the canvas event.
 
 macOS Cmd/Super modifiers cannot be preserved through tmux: tmux rewrites `CSI 1;9 C/D` as Alt-modified arrows. `terminalKeyInput.ts` therefore maps Cmd+Left/Right to Home/End and Cmd+Up/Down to Ctrl+Home/End, preserving the editing meaning through sequences tmux transports unchanged. Shift variants map to the corresponding selecting navigation sequences.
+
+## Restart, Recovery, and Input Ownership
+
+Terminal identity and terminal input ownership are separate contracts:
+
+- A persistent terminal is reattached by its stable terminal ID and tmux session when that session survived the server restart.
+- A bound Pi, Codex, or Claude terminal with a real `agentSessionId` is resumable when its tmux session did not survive; the server starts the provider-specific resume command instead of silently leaving the board shape in an exited state.
+- A free shell without an Agent session is not auto-relaunched.
+- WebSocket output subscription and input ownership are both restored after reconnect. If a newer canvas connection subscribes with `owner: true`, ownership for that terminal transfers from a stale browser connection only; other terminal streams on the old connection remain untouched.
+- A cold-to-visible transition reattaches the output stream and hydrates a fresh snapshot before relying on live frames.
+- A terminal component remount starts with no attachment and must resubscribe based on its measured presentation state; it cannot assume an earlier UI attachment still exists.
+- Attachment changes are client-scoped. Detaching one view removes only its output subscription; it never pauses a PTY shared by another view or changes Agent process state.
+- Output ACK and renderer suspension are independent: detaching releases that connection's stream window; returning attaches again and recovers from the authoritative snapshot.
+- A terminal may display a live snapshot while rejecting input only when ownership is stale; this is a transport recovery bug, not an Agent status.
 
 ## Current Gaps
 

@@ -1,11 +1,12 @@
 import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { PTYManager } from './PTYManager';
 import { TerminalWebSocketServer } from './WebSocketServer';
-import { tmuxAvailable } from './ptyAgent';
+import { killTmuxSession, tmuxAvailable, tmuxName } from './ptyAgent';
 
 const TOKEN = 'recovery-token-recovery-token-ok';
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -172,22 +173,203 @@ describe('PTY session recovery', () => {
     await second.dispose();
     await rm(dir, { recursive: true, force: true });
   });
-  it('does not push output to subscribers while paused, but the snapshot still has it', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'bac-pty-pause-'));
+  it('resumes a bound agent when the tmux session is gone after restart', async () => {
+    if (!tmuxAvailable()) return;
+    const dir = await mkdtemp(path.join(tmpdir(), 'bac-pty-agent-resume-'));
+    const first = new PTYManager({
+      stateDir: dir,
+      persistentSessions: true,
+      enableAgentHooks: false,
+      enableProviderHooks: false,
+    });
+    const id = first.spawn({
+      shell: '/bin/sh',
+      startupCommand: 'sleep 30',
+      startupCommandDelivery: 'shell-ready',
+      agentKind: 'pi',
+      nodeId: 'pi-session-1',
+      launchId: 'pending-pi',
+      launchToken: 'pi-recovery-token',
+      size: { cols: 80, rows: 24 },
+    });
+    await waitFor(() => first.getInfo(id)?.status === 'running', 'first agent running');
+    expect(first.applyAgentStatus(id, 'pi-recovery-token', { state: 'done', providerSessionId: 'pi-session-1' })).toBe(true);
+    expect(first.getInfo(id)?.agentSessionId).toBe('pi-session-1');
+    const beforeIncarnation = first.getInfo(id)?.incarnationId;
+    await first.dispose();
+    killTmuxSession(tmuxName(id), 'tmux', path.join(dir, '.tmux.sock'));
+
+    const restored = new PTYManager({
+      stateDir: dir,
+      persistentSessions: true,
+      enableAgentHooks: false,
+      enableProviderHooks: false,
+    });
+    cleanups.push(() => restored.dispose());
+    expect(restored.getInfo(id)).toMatchObject({
+      status: 'running',
+      agentSessionId: 'pi-session-1',
+    });
+    expect(restored.getInfo(id)?.startupCommand).toContain('pi --session');
+    await waitFor(() => restored.getInfo(id)?.status === 'running', 'recovered agent status');
+    expect(restored.getInfo(id)?.incarnationId).not.toBe(beforeIncarnation);
+    await restored.dispose();
+    cleanups.length = 0;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('writes a complete archive before dispose resolves so a restart can resume', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'bac-pty-dispose-archive-'));
+    const manager = new PTYManager({
+      stateDir: dir,
+      persistentSessions: false,
+      enableAgentHooks: false,
+      enableProviderHooks: false,
+    });
+    const id = manager.spawn({
+      shell: '/bin/sh',
+      args: ['-c', 'printf dispose-archive; sleep 30'],
+      agentKind: 'pi',
+      nodeId: 'pi-dispose-session',
+      launchId: 'pi-dispose-session',
+      size: { cols: 40, rows: 10 },
+    });
+    await waitFor(() => manager.getSnapshot(id)?.data.includes('dispose-archive') === true, 'archive output');
+
+    // Resolve a possibly-pending async write, then shut down.
+    await manager.dispose();
+
+    const metaPath = path.join(dir, `${id}.json`);
+    expect(existsSync(metaPath)).toBe(true);
+    const meta = JSON.parse(await readFile(metaPath, 'utf8')) as { info?: { id?: string } };
+    expect(meta.info?.id).toBe(id);
+    expect(existsSync(path.join(dir, `${id}.log`))).toBe(true);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('does not relaunch historical archives that only claim to be running', async () => {
+    if (!tmuxAvailable()) return;
+    const dir = await mkdtemp(path.join(tmpdir(), 'bac-pty-stale-archives-'));
+    await writeFile(path.join(dir, 'terminal-stale-a.json'), JSON.stringify({
+      info: {
+        id: 'terminal-stale-a',
+        nodeId: 'pi-stale-session',
+        launchId: 'pi-stale-session',
+        agentKind: 'pi',
+        status: 'running',
+        title: 'stale',
+        cwd: dir,
+        shell: '/bin/sh',
+        createdAt: 1,
+        updatedAt: 1,
+        size: { cols: 40, rows: 10 },
+      },
+      tmuxSession: 'bohemian-terminal-stale-a',
+      sequence: 1,
+      outputOffset: 1,
+    }), 'utf8');
+
+    const restored = new PTYManager({
+      stateDir: dir,
+      persistentSessions: true,
+      enableAgentHooks: false,
+      enableProviderHooks: false,
+    });
+    cleanups.push(() => restored.dispose());
+    // The archive claims "running" and names a session, but its tmux server is
+    // gone. It is history; restoring it must not spawn a fresh Agent process.
+    expect(restored.getInfo('terminal-stale-a')?.status).toBe('exited');
+    expect(restored.getInfo('terminal-stale-a')?.pid).toBeUndefined();
+    await restored.dispose();
+    cleanups.length = 0;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('keeps PTY execution running while an output attachment is detached', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'bac-pty-detached-output-'));
     const manager = new PTYManager({ stateDir: dir, persistentSessions: false });
     cleanups.push(() => manager.dispose());
     const seen: string[] = [];
     const id = manager.spawn({
       shell: '/bin/sh',
-      args: ['-c', 'sleep 0.2; printf paused-byte'],
+      args: ['-c', 'printf detached-byte; sleep 0.2; printf attached-byte; sleep 30'],
       size: { cols: 40, rows: 10 },
     });
-    expect(manager.pause(id)).toBe(true);
-    manager.subscribe(id, (data) => seen.push(data));
-    await waitFor(() => manager.getSnapshot(id)?.data.includes('paused-byte') === true, 'paused output');
-    expect(seen.join('')).not.toContain('paused-byte');
-    expect(manager.resume(id)).toBe(true);
-    expect(seen.join('')).toContain('paused-byte');
+    await waitFor(() => manager.getSnapshot(id)?.data.includes('detached-byte') === true, 'detached output snapshot');
+    expect(manager.getInfo(id)?.status).toBe('running');
+    const unsubscribe = manager.subscribe(id, (data) => seen.push(data));
+    await waitFor(() => seen.join('').includes('attached-byte'), 'attached live output');
+    expect(seen.join('')).toContain('attached-byte');
+    expect(seen.join('')).not.toContain('detached-byte');
+    unsubscribe();
+    await manager.dispose();
+    cleanups.length = 0;
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('terminal websocket ownership', () => {
+  it('moves input ownership to a newer connection for the same terminal', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'bac-ws-owner-'));
+    const manager = new PTYManager({
+      stateDir: dir,
+      persistentSessions: false,
+      enableAgentHooks: false,
+      enableProviderHooks: false,
+    });
+    const server = new TerminalWebSocketServer({
+      port: 0,
+      host: '127.0.0.1',
+      ptyManager: manager,
+      token: TOKEN,
+      allowedOrigins: ['http://127.0.0.1:18720'],
+    });
+    cleanups.push(() => {
+      server.close();
+      return manager.dispose();
+    });
+    const port = await server.ready();
+    const owner = await connect(`ws://127.0.0.1:${port}?token=${TOKEN}`, { origin: 'http://127.0.0.1:18720' });
+    cleanups.push(() => owner.close());
+    const id = manager.spawn({ shell: '/bin/sh', args: ['-c', 'sleep 30'], size: { cols: 40, rows: 10 } });
+
+    owner.send(JSON.stringify({
+      type: 'subscribe',
+      id: 'owner-first',
+      channel: 'terminal.output',
+      owner: true,
+      filter: { terminalId: id },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const next = await connect(`ws://127.0.0.1:${port}?token=${TOKEN}`, { origin: 'http://127.0.0.1:18720' });
+    cleanups.push(() => next.close());
+    const responses: Array<{ id: string; success: boolean; result?: { accepted?: boolean } }> = [];
+    next.on('message', (raw) => responses.push(JSON.parse(raw.toString()) as typeof responses[number]));
+    next.send(JSON.stringify({
+      type: 'subscribe',
+      id: 'owner-second',
+      channel: 'terminal.output',
+      owner: true,
+      filter: { terminalId: id },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    next.send(JSON.stringify({
+      type: 'request',
+      id: 'write-after-takeover',
+      method: 'terminal.writeAccepted',
+      params: { terminalId: id, data: '' },
+    }));
+
+    await waitFor(
+      () => responses.some((item) => item.id === 'write-after-takeover'),
+      'takeover write response',
+    );
+    const write = responses.find((item) => item.id === 'write-after-takeover');
+    expect(write?.success).toBe(true);
+    expect(write?.result?.accepted).toBe(true);
+
+    server.close();
     await manager.dispose();
     cleanups.length = 0;
     await rm(dir, { recursive: true, force: true });

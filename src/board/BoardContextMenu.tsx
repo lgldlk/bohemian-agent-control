@@ -19,9 +19,9 @@ import { sessionFromShape, type SessionCopy } from './copySession';
 import { classifyBoardContext } from './boardContextMenuModel';
 import { arrangeGroupFrame, arrangeWholeBoard } from './boardArrangeEditor';
 import { createGroupFromSelection, createEmptyBusinessGroupAtPoint, createNamedGroupFrameAtPoint, expandFrameToChildren, ungroupSelection } from './groupFrameEditor';
-import { focusTaskShape as focusTaskShapeOnEditor } from './boardSync';
+import { focusTaskShape as focusTaskShapeOnEditor, readGroupsFromBoard } from './boardSync';
 import { getBoardTerminalApi } from './terminalApi';
-import { useSpaceStore, type SpaceGroup } from '@/space/spaceStore';
+import type { SpaceGroup } from '@/space/spaceStore';
 
 interface BoardContextActions {
   addAgentAt: (point: { x: number; y: number }, groupId?: string) => void;
@@ -158,7 +158,7 @@ function TaskMenu({ editor, shapes }: { editor: Editor; shapes: TLShape[] }) {
           id="remove-task-from-board"
           label={taskIds.length > 1 ? 'action.board-remove-agents' : 'action.board-remove-agent'}
           onSelect={() => {
-            for (const taskId of taskIds) useSpaceStore.getState().removeFromSpace(taskId);
+            editor.deleteShapes(taskShapes.map((shape) => shape.id));
           }}
         />
       </TldrawUiMenuGroup>
@@ -173,7 +173,10 @@ function MoveTasksToGroupSubmenu({
   editor: Editor;
   taskShapes: TLShape[];
 }) {
-  const groups = useSpaceStore((state) => state.groups);
+  const groups = useValue('board frame groups', () => readGroupsFromBoard(editor).map((group) => ({
+    ...group,
+    collapsed: false,
+  })), [editor]);
   if (taskShapes.length === 0 || groups.length === 0) return null;
   const currentGroupIds = new Set(taskShapes.map((shape) => {
     const parent = editor.getShape(shape.parentId);
@@ -223,10 +226,6 @@ function moveTaskShapesToGroup(editor: Editor, taskShapes: TLShape[], group: Spa
   editor.markHistoryStoppingPoint('移动到分组');
   editor.reparentShapes(taskShapes.map((shape) => shape.id), parentId);
   if (targetFrameId) expandFrameToChildren(editor, targetFrameId);
-  for (const shape of taskShapes) {
-    const taskId = String((shape.props as { taskId?: string }).taskId ?? '');
-    if (taskId) useSpaceStore.getState().moveToGroup(taskId, group.id);
-  }
 }
 
 function TerminalMenu({ editor, shape }: { editor: Editor; shape: TLShape }) {

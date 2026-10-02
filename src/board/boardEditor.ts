@@ -2,6 +2,7 @@ import { createShapeId, type Editor, type TLParentId, type TLShapeId } from 'tld
 import type { Task } from '@/types';
 import { expandFrameToChildren } from './groupFrameEditor';
 import { focusTaskShape as focusTaskShapeOnEditor } from './boardSync';
+import { findTaskShape } from './boardShapes';
 import { taskToCardProps } from './TaskCardShape';
 
 let boardEditor: Editor | null = null;
@@ -27,6 +28,14 @@ export function focusTaskShape(taskId: string): void {
   pendingFocusTaskId = taskId;
   const editor = boardEditor;
   if (editor) focusPendingTaskShape(editor);
+}
+
+/** Removing a card removes board membership but never the Agent/session. */
+export function removeTaskCardShape(taskId: string): void {
+  const editor = boardEditor;
+  if (!editor) return;
+  const shapeId = findTaskShape(editor, taskId);
+  if (shapeId) editor.deleteShapes([shapeId]);
 }
 
 /** 卡片可能由下一轮 board sync 才创建；成功聚焦前保留最后一次请求。 */

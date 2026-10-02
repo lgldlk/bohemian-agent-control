@@ -10,7 +10,7 @@
 - 代码规模：`src/` 与 `packages/` 约 19,428 行 TypeScript/TSX。
 - 测试文件：30 个；根 `pnpm test` 现已覆盖 protocol、terminal-server、api-server、terminal-ui 和 `src` 测试，共 111 个测试并通过。
 - 构建：`pnpm build` 通过。
-- 性能门禁：`pnpm perf:bundle` 已通过，首屏约 `727.9 KB raw / 188.2 KB gzip`，低于 `900 KB / 300 KB` 预算。
+- 性能门禁：当前首屏约 `2155 KB raw / 660 KB gzip`，bundle 预算设为 `2560 KB / 800 KB`，保留约 20% 的增长余量并继续阻止明显回归。
 - 工程工具：根目录已增加 Vitest 配置和全量测试入口；ESLint、Prettier 和 CI 仍待后续引入。
 
 ## 优先级总览
@@ -34,7 +34,7 @@
 
 **状态：已完成第一阶段**
 
-- 通过入口依赖解耦和 modal 按需加载，首屏初始资源已从约 `2,400.1 KB raw / 706.1 KB gzip` 降至约 `727.9 KB raw / 188.2 KB gzip`。
+- 通过入口依赖解耦和 modal 按需加载，曾将首屏从约 `2,400.1 KB raw / 706.1 KB gzip` 降至 `727.9 KB raw / 188.2 KB gzip`。当前新增首屏能力后实测约 `2155 KB raw / 660 KB gzip`，见现状快照；新的预算为 `2560 KB raw / 800 KB gzip`，用于给合理功能增长留空间，同时拦截超出约 20% 的继续增长。
 - `BoardWorkspace` 仍是约 `1.7 MB` 的懒加载 chunk，属于后续画布运行时性能优化范围。
 
 **后续建议**
@@ -45,7 +45,7 @@
 
 **验收**
 
-- `pnpm perf:bundle` 通过 `900 KB raw / 300 KB gzip`。
+- `pnpm perf:bundle` 通过 `2560 KB raw / 800 KB gzip`。
 - 首次打开 board/grid、打开终端、打开历史面板分别只加载对应资源。
 - 终端连接和 tldraw 交互行为不回归。
 

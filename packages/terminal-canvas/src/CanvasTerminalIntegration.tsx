@@ -98,25 +98,6 @@ export const CanvasTerminalIntegration = forwardRef<
     setTerminalWindows(repaired);
   }, [manager.inventoryLoaded, manager.terminals]);
 
-  const parkKey = terminalWindows
-    .map((item) => `${item.id}:${item.minimized ? 1 : 0}:${collectTerminalIds(item.layout).join(',')}`)
-    .join('|');
-  useEffect(() => {
-    const park = () => {
-      const hidden = document.hidden;
-      for (const item of terminalWindowsRef.current) {
-        const ids = collectTerminalIds(item.layout);
-        for (const id of ids) {
-          const op = item.minimized || hidden ? client.pauseTerminal(id) : client.resumeTerminal(id);
-          void op.catch(() => false);
-        }
-      }
-    };
-    park();
-    document.addEventListener('visibilitychange', park);
-    return () => document.removeEventListener('visibilitychange', park);
-  }, [client, parkKey]);
-
   useEffect(() => {
     if (!reconciledRef.current) return;
     const persist = createDebouncedTask(120);

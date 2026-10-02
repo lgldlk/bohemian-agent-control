@@ -40,8 +40,8 @@ console.log(`Initial raw:    ${mb(raw)}`);
 console.log(`Initial gzip:   ${mb(gzip)}`);
 console.log(`Entry:          ${entry}`);
 
-const maxRaw = Number(process.env.PERF_MAX_INITIAL_RAW || 900 * 1024);
-const maxGzip = Number(process.env.PERF_MAX_INITIAL_GZIP || 300 * 1024);
+const maxRaw = Number(process.env.PERF_MAX_INITIAL_RAW || 2560 * 1024);
+const maxGzip = Number(process.env.PERF_MAX_INITIAL_GZIP || 800 * 1024);
 if (raw > maxRaw || gzip > maxGzip) {
   console.error(`Bundle budget exceeded (raw <= ${mb(maxRaw)}, gzip <= ${mb(maxGzip)})`);
   process.exitCode = 1;

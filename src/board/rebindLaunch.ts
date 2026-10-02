@@ -1,7 +1,6 @@
 import type { Editor, TLShapeId } from 'tldraw';
 import type { TerminalInfo } from '@bohemian/terminal-protocol';
 import { boundSessionId } from '@/domain/terminalIdentity';
-import { useSpaceStore } from '@/space/spaceStore';
 import { useWorkspaceStore } from '@/workspace/workspaceStore';
 import { findTaskShape } from './boardShapes';
 import { cardPropsChanged, taskToCardProps, type TaskCardShapeProps } from './TaskCardShape';
@@ -48,10 +47,9 @@ export function rebindLaunchCards(
 
     const terminalShape = terminalShapeIdentity(editor, info.id);
     const sources = sessionRebindSources(info, terminalShape?.nodeId, previousInfos.get(info.id));
-    const space = useSpaceStore.getState();
-    const source = sources.find((id) =>
-      Boolean(findTaskShape(editor, id)) || space.groups.some((group) => group.taskIds.includes(id)),
-    );
+    // Membership is the canvas: only shapes decide whether an Agent is on the
+    // board, so rebinding is a pure card rewrite.
+    const source = sources.find((id) => Boolean(findTaskShape(editor, id)));
 
     const sourceCard = source ? findTaskShape(editor, source) : null;
     const targetCard = findTaskShape(editor, target);
@@ -84,8 +82,6 @@ export function rebindLaunchCards(
     }
 
     if (source) {
-      const sourceGroup = space.groups.find((group) => group.taskIds.includes(source));
-      const targetGrouped = space.groups.some((group) => group.taskIds.includes(target));
       const otherSourceTerminal = editor.getCurrentPageShapes().some((shape) =>
         shape.type === 'terminal'
         && shape.id !== terminalShape?.id
@@ -96,8 +92,7 @@ export function rebindLaunchCards(
         if (terminalShape) {
           connectShapes(editor, targetCard, terminalShape.id, linkDirection(editor, targetCard, terminalShape.id));
         }
-        if (!targetGrouped && sourceGroup) space.addToGroup(target, sourceGroup.id);
-        space.removeFromSpace(source);
+        // The old topic card leaves the board by being deleted from the canvas.
         const sourceShape = editor.getShape(sourceCard);
         if (sourceShape) {
           const dependents = collectDependentShapeIds(editor, sourceShape)
@@ -105,14 +100,9 @@ export function rebindLaunchCards(
           editor.deleteShapes([sourceCard, ...dependents]);
         }
         rebound += 1;
-      } else if (!duplicateTarget) {
-        if (sourceGroup) {
-          space.rebindTaskId(source, target);
-          rebound += 1;
-        } else if (sourceCard) {
-          space.addToGroup(target);
-          rebound += 1;
-        }
+      } else if (!duplicateTarget && sourceCard) {
+        // Card already rewritten to the new id above; membership follows it.
+        rebound += 1;
       }
       if (source.startsWith('pending-')) useWorkspaceStore.getState().removePending(source);
     }

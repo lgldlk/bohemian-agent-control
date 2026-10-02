@@ -5,7 +5,6 @@ import { focusPendingTaskShape, getBoardEditor, subscribeBoardEditor } from './b
 import {
   bootstrapNamedFrames,
   forceBoardPaint,
-  pruneOrphanShapes,
   refreshTaskCardProps,
   syncSpaceToBoard,
 } from './boardSync';
@@ -18,6 +17,8 @@ import type { GroupInput } from './boardSync';
 export interface UseBoardSyncOptions {
   /** 是否启用同步（例如，只在 board 视图时启用） */
   enabled: boolean;
+  /** Active board. Only this board's projection may be synced or pruned. */
+  boardId?: string;
   /** 任务列表 */
   tasks: Task[];
   /** 分组信息 */
@@ -44,6 +45,7 @@ export interface UseBoardSyncOptions {
  */
 export function useBoardSync({
   enabled,
+  boardId,
   tasks,
   groups,
   spaceIds,
@@ -53,6 +55,9 @@ export function useBoardSync({
   // 使用 ref 保持最新值，避免在 effect 依赖中引入过多依赖
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
+
+  const boardRef = useRef(boardId);
+  boardRef.current = boardId;
 
   const tasksMapRef = useRef(new Map<string, Task>());
   tasksMapRef.current = new Map(tasks.map((t) => [t.id, t]));
@@ -65,6 +70,10 @@ export function useBoardSync({
     const sync = () => {
       const editor = getBoardEditor();
       if (!editor) return;
+      // A board switch changes the current page. Never sync or prune a board
+      // that is no longer the one the projection belongs to.
+      const board = boardRef.current;
+      if (board && editor.getCurrentPageId() !== board) return;
 
       const g = groupsRef.current;
       const map = tasksMapRef.current;
@@ -90,8 +99,9 @@ export function useBoardSync({
         });
       }
 
+      // The canvas is the board source of truth. Never prune task cards from a
+      // membership list: an empty/late store must not erase the user's board.
       setBoardSpaceSyncReady(true);
-      pruneOrphanShapes(editor, new Set(spaceIds));
       focusPendingTaskShape(editor);
 
       const after = editor.getCurrentPageShapes().filter((s) => s.type === 'task-card').length;
@@ -104,5 +114,5 @@ export function useBoardSync({
       unsubscribe();
       scheduler.cancel();
     };
-  }, [enabled, groups, spaceIds, lastUpdate, tasks.length]);
+  }, [boardId, enabled, groups, spaceIds, lastUpdate, tasks.length]);
 }

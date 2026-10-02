@@ -11,6 +11,7 @@ export function injectPiExtension(command: string, extensionPath?: string): stri
  * scrollable without flattening its screen into fake normal-buffer output.
  */
 export function ensurePiFullscreen(command: string): string {
+  if (!/(?:^|\s)(?:(?:env)\s+)?(?:pi|[^\s/]+\/pi)(?=\s|$)/.test(command)) return command;
   if (/(?:^|\s)--tui-mode(?:\s|=)/.test(command)) return command;
   return `${command} --tui-mode fullscreen`;
 }

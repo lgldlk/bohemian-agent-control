@@ -24,6 +24,16 @@ export interface TerminalClientOptions {
 }
 
 type OutputCallback = (frame: TerminalOutputFrame) => void;
+type OutputRegistration = {
+  callback: OutputCallback;
+  active: boolean;
+};
+
+export interface TerminalOutputSubscription {
+  setActive(active: boolean): boolean;
+  unsubscribe(): void;
+}
+
 type ExitCallback = (code: number | null) => void;
 type EventCallback = (event: TerminalEvent) => void;
 type ConnectionCallback = (state: TerminalConnectionState) => void;
@@ -43,7 +53,8 @@ export class TerminalClient {
     reject: (error: Error) => void;
     timeout: ReturnType<typeof setTimeout>;
   }>();
-  private readonly outputCallbacks = new Map<TerminalId, Set<OutputCallback>>();
+  private readonly outputCallbacks = new Map<TerminalId, Map<symbol, OutputRegistration>>();
+  private readonly subscribedOutputs = new Set<TerminalId>();
   private readonly pendingInput = new Map<TerminalId, string[]>();
   private readonly pendingInputBytes = new Map<TerminalId, number>();
   private readonly pendingAcks: WSAckMessage[] = [];
@@ -77,8 +88,11 @@ export class TerminalClient {
           ws.close();
           return;
         }
-        this.setConnectionState('connected');
+        // Restore output attachments before notifying panes that the transport
+        // is connected. Hydration RPCs triggered by that notification must be
+        // ordered after their output subscriptions on this socket.
         this.restoreSubscriptions();
+        this.setConnectionState('connected');
         this.startHeartbeat();
         this.onConnect?.();
       };
@@ -87,7 +101,9 @@ export class TerminalClient {
         try {
           if (typeof event.data !== 'string') {
             const frame = decodeTerminalOutputFrame(event.data as ArrayBuffer);
-            if (frame) this.outputCallbacks.get(frame.terminalId)?.forEach((callback) => callback(frame));
+            if (frame) this.outputCallbacks.get(frame.terminalId)?.forEach((registration) => {
+              if (registration.active) registration.callback(frame);
+            });
             return;
           }
           this.handleMessage(JSON.parse(String(event.data)) as WSMessage);
@@ -116,6 +132,7 @@ export class TerminalClient {
     if (this.ackTimer) clearTimeout(this.ackTimer);
     this.ackTimer = null;
     this.pendingAcks.length = 0;
+    this.subscribedOutputs.clear();
     this.rejectPending(new Error('Terminal client disconnected'));
     this.setConnectionState('disconnected');
   }
@@ -132,6 +149,7 @@ export class TerminalClient {
     if (this.ackTimer) clearTimeout(this.ackTimer);
     this.ackTimer = null;
     this.pendingAcks.length = 0;
+    this.subscribedOutputs.clear();
     this.rejectPending(new Error('Terminal connection lost'));
     this.setConnectionState('disconnected');
     if (wasConnected) this.onDisconnect?.();
@@ -158,14 +176,7 @@ export class TerminalClient {
   private restoreSubscriptions(): void {
     this.send({ type: 'subscribe', id: 'terminal-events', channel: 'terminal.events' });
     for (const terminalId of this.outputCallbacks.keys()) {
-      this.send({
-        type: 'subscribe',
-        id: this.outputSubscriptionId(terminalId),
-        channel: 'terminal.output',
-        owner: true,
-        filter: { terminalId },
-      });
-      this.flushInput(terminalId);
+      this.ensureOutputSubscription(terminalId);
     }
   }
 
@@ -184,7 +195,9 @@ export class TerminalClient {
     this.eventCallbacks.forEach((callback) => callback(event));
     if (event.type === 'output') {
       const frame = event.frame;
-      this.outputCallbacks.get(frame.terminalId)?.forEach((callback) => callback(frame));
+      this.outputCallbacks.get(frame.terminalId)?.forEach((registration) => {
+        if (registration.active) registration.callback(frame);
+      });
     } else if (event.type === 'exit') {
       this.exitCallbacks.get(event.terminalId)?.forEach((callback) => callback(event.exitCode));
     }
@@ -336,16 +349,39 @@ export class TerminalClient {
     this.send({ type: 'ack-batch', acknowledgements });
   }
 
+  private ensureOutputSubscription(terminalId: TerminalId): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.subscribedOutputs.has(terminalId)) return;
+    const registrations = this.outputCallbacks.get(terminalId);
+    if (!registrations || ![...registrations.values()].some((registration) => registration.active)) return;
+    this.send({
+      type: 'subscribe',
+      id: this.outputSubscriptionId(terminalId),
+      channel: 'terminal.output',
+      owner: true,
+      filter: { terminalId },
+    });
+    this.subscribedOutputs.add(terminalId);
+    this.flushInput(terminalId);
+  }
+
+  private removeOutputSubscription(terminalId: TerminalId): void {
+    if (!this.subscribedOutputs.delete(terminalId)) return;
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.send({ type: 'unsubscribe', id: this.outputSubscriptionId(terminalId) });
+    }
+  }
+
+  private syncOutputSubscription(terminalId: TerminalId): void {
+    const registrations = this.outputCallbacks.get(terminalId);
+    if (registrations && [...registrations.values()].some((registration) => registration.active)) {
+      this.ensureOutputSubscription(terminalId);
+    } else {
+      this.removeOutputSubscription(terminalId);
+    }
+  }
+
   async clearBuffer(terminalId: TerminalId): Promise<boolean> {
     return (await this.request('terminal.clearBuffer', { terminalId })).success;
-  }
-
-  async pauseTerminal(terminalId: TerminalId): Promise<boolean> {
-    return (await this.request('terminal.pause', { terminalId })).success;
-  }
-
-  async resumeTerminal(terminalId: TerminalId): Promise<boolean> {
-    return (await this.request('terminal.resume', { terminalId })).success;
   }
 
   async terminalHistory(terminalId?: TerminalId, limit = 50): Promise<TerminalHistoryEntry[]> {
@@ -356,32 +392,32 @@ export class TerminalClient {
     return (await this.request('terminal.search', { query, limit })).matches;
   }
 
-  subscribeToOutput(terminalId: TerminalId, callback: OutputCallback): () => void {
-    let callbacks = this.outputCallbacks.get(terminalId);
-    if (!callbacks) {
-      callbacks = new Set();
-      this.outputCallbacks.set(terminalId, callbacks);
-      if (this.connectionState === 'connected') {
-        this.send({
-          type: 'subscribe',
-          id: this.outputSubscriptionId(terminalId),
-          channel: 'terminal.output',
-          owner: true,
-          filter: { terminalId },
-        });
-      }
+  subscribeToOutput(terminalId: TerminalId, callback: OutputCallback): TerminalOutputSubscription {
+    let registrations = this.outputCallbacks.get(terminalId);
+    if (!registrations) {
+      registrations = new Map();
+      this.outputCallbacks.set(terminalId, registrations);
     }
-    callbacks.add(callback);
-    return () => {
-      const current = this.outputCallbacks.get(terminalId);
-      if (!current) return;
-      current.delete(callback);
-      if (current.size === 0) {
-        this.outputCallbacks.delete(terminalId);
-        if (this.connectionState === 'connected') {
-          this.send({ type: 'unsubscribe', id: this.outputSubscriptionId(terminalId) });
-        }
-      }
+    const attachmentId = Symbol(terminalId);
+    const registration: OutputRegistration = { callback, active: true };
+    registrations.set(attachmentId, registration);
+    this.syncOutputSubscription(terminalId);
+    let subscribed = true;
+    return {
+      setActive: (active) => {
+        if (!subscribed || registration.active === active) return false;
+        registration.active = active;
+        this.syncOutputSubscription(terminalId);
+        return true;
+      },
+      unsubscribe: () => {
+        if (!subscribed) return;
+        subscribed = false;
+        const current = this.outputCallbacks.get(terminalId);
+        current?.delete(attachmentId);
+        if (current?.size === 0) this.outputCallbacks.delete(terminalId);
+        this.syncOutputSubscription(terminalId);
+      },
     };
   }
 

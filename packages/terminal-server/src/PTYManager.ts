@@ -75,7 +75,6 @@ export interface PTYSession {
   persistInFlight: Promise<void> | null;
   persistQueued: boolean;
   closed: boolean;
-  paused: boolean;
   droppedOutput: boolean;
   inFlightSequence: number;
   inFlightBytes: number;
@@ -206,7 +205,6 @@ export class PTYManager {
       persistInFlight: null,
       persistQueued: false,
       closed: false,
-      paused: false,
       droppedOutput: false,
       inFlightSequence: 0,
       inFlightBytes: 0,
@@ -490,7 +488,6 @@ export class PTYManager {
       session.droppedOutput = false;
       return;
     }
-    if (session.paused) return;
     const data = session.pendingOutput.join('');
     const sourceStart = session.pendingOutputStart ?? session.outputOffset - Buffer.byteLength(data, 'utf8');
     const sourceEnd = sourceStart + Buffer.byteLength(data, 'utf8');
@@ -500,10 +497,15 @@ export class PTYManager {
     const droppedOutput = session.droppedOutput;
     session.droppedOutput = false;
     session.inFlightSequence = session.sequence;
-    for (const callback of session.subscribers) callback(data, session.sequence, sourceEnd - sourceStart, droppedOutput, sourceStart, sourceEnd);
+    for (const callback of session.subscribers) {
+      callback(data, session.sequence, sourceEnd - sourceStart, droppedOutput, sourceStart, sourceEnd);
+    }
   }
 
-  subscribe(id: TerminalId, callback: (data: string, sequence: number, bytes: number, droppedOutput: boolean, sourceStart: number, sourceEnd: number) => void): () => void {
+  subscribe(
+    id: TerminalId,
+    callback: (data: string, sequence: number, bytes: number, droppedOutput: boolean, sourceStart: number, sourceEnd: number) => void,
+  ): () => void {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Terminal ${id} not found`);
     session.subscribers.add(callback);
@@ -576,21 +578,6 @@ export class PTYManager {
     session.truncated = false;
     session.sequence += 1;
     this.persist(session);
-    return true;
-  }
-
-  pause(id: TerminalId): boolean {
-    const session = this.sessions.get(id);
-    if (!session) return false;
-    session.paused = true;
-    return true;
-  }
-
-  resume(id: TerminalId): boolean {
-    const session = this.sessions.get(id);
-    if (!session) return false;
-    session.paused = false;
-    this.flushOutput(id);
     return true;
   }
 
@@ -759,6 +746,49 @@ export class PTYManager {
     }, 500);
   }
 
+  private persistedMetadata(session: PTYSession): { metadata: PersistedSession; scrollback: string } {
+    return {
+      scrollback: session.scrollback,
+      metadata: {
+        info: this.cloneInfo(session.info),
+        sequence: session.sequence,
+        outputOffset: session.outputOffset,
+        truncated: session.truncated,
+        alternateScreen: session.info.alternateScreen,
+        normalScrollback: session.normalScrollback,
+        alternateFrame: session.alternateFrame,
+        tmuxSession: session.tmuxSession,
+        commands: session.commandBuffer.commands.map((command) => ({
+          terminalId: session.id,
+          title: session.info.title,
+          command: command.command,
+          at: command.at,
+        })),
+      },
+    };
+  }
+
+  /**
+   * Blocking write used only while shutting down. The async writer can lose the
+   * race against process exit, and a lost archive is exactly what makes an
+   * Agent terminal unrecoverable after a restart. The tmux pane may be
+   * repainting as the attach client detaches, so a recovered archive keeps its
+   * previously persisted scrollback instead of capturing that final frame.
+   */
+  private persistSync(session: PTYSession): void {
+    const files = this.paths(session.id);
+    const { metadata, scrollback } = this.persistedMetadata(session);
+    try {
+      const existing = fs.existsSync(files.meta)
+        ? (JSON.parse(fs.readFileSync(files.meta, 'utf8')) as unknown)
+        : null;
+      fs.writeFileSync(files.meta, JSON.stringify(metadata), { mode: 0o600 });
+      if (!existing) fs.writeFileSync(files.log, scrollback, { mode: 0o600 });
+    } catch (error) {
+      console.warn(`[PTY] Failed to persist ${session.id} on shutdown:`, error);
+    }
+  }
+
   private persist(session: PTYSession): void {
     if (session.closed) return;
     if (session.persistInFlight) {
@@ -767,24 +797,8 @@ export class PTYManager {
     }
 
     const files = this.paths(session.id);
-    const metadata: PersistedSession = {
-      info: this.cloneInfo(session.info),
-      sequence: session.sequence,
-      outputOffset: session.outputOffset,
-      truncated: session.truncated,
-      alternateScreen: session.info.alternateScreen,
-      normalScrollback: session.normalScrollback,
-      alternateFrame: session.alternateFrame,
-      tmuxSession: session.tmuxSession,
-      commands: session.commandBuffer.commands.map((command) => ({
-        terminalId: session.id,
-        title: session.info.title,
-        command: command.command,
-        at: command.at,
-      })),
-    };
+    const { metadata, scrollback } = this.persistedMetadata(session);
     const metadataText = JSON.stringify(metadata);
-    const scrollback = session.scrollback;
     // Every writer gets its own temporary files. A shared `${meta}.tmp`
     // allows two terminal-server processes to overwrite/rename each other's
     // buffers, producing a valid JSON prefix followed by raw terminal output.
@@ -831,18 +845,33 @@ export class PTYManager {
         if (!metadata.info?.id) continue;
         const files = this.paths(metadata.info.id);
         const scrollback = fs.existsSync(files.log) ? fs.readFileSync(files.log, 'utf8') : '';
-        const recoverable = Boolean(
+        const tmuxAlive = Boolean(
           this.persistentSessions
           && metadata.tmuxSession
-          && metadata.info.status === 'running',
+          && hasTmuxSession(metadata.tmuxSession, this.tmuxCommand, this.tmuxSocket),
         );
+        // Resume only a terminal whose process really survived the restart.
+        // A stale archive that merely says "running" is history, not a live
+        // session; replaying all of them would relaunch every past Agent.
+        const shouldRecoverAgent = Boolean(
+          this.persistentSessions
+          && !tmuxAlive
+          && metadata.tmuxSession
+          && metadata.info.status === 'running'
+          && this.prepareAgentRecovery(metadata.info),
+        );
+        const recoverable = tmuxAlive;
         const info: TerminalInfo = {
           ...metadata.info,
-          incarnationId: metadata.info.incarnationId ?? crypto.randomUUID(),
-          status: recoverable ? 'running' : 'exited',
+          incarnationId: shouldRecoverAgent ? crypto.randomUUID() : (metadata.info.incarnationId ?? crypto.randomUUID()),
+          status: recoverable ? 'running' : shouldRecoverAgent ? 'running' : 'exited',
           updatedAt: metadata.info.updatedAt ?? metadata.info.createdAt,
         };
         delete info.pid;
+        if (!recoverable && !shouldRecoverAgent) {
+          info.agentStatus = undefined;
+          info.agentDetail = undefined;
+        }
         const bufferMode = createTerminalBufferModel();
         bufferMode.feed(scrollback);
         const session: PTYSession = {
@@ -858,7 +887,6 @@ export class PTYManager {
           persistInFlight: null,
           persistQueued: false,
           closed: false,
-          paused: false,
           droppedOutput: false,
           inFlightSequence: 0,
           inFlightBytes: 0,
@@ -879,6 +907,13 @@ export class PTYManager {
           alternateFrame: metadata.alternateFrame || bufferMode.getAlternateFrame(),
         };
         this.sessions.set(info.id, session);
+        if (shouldRecoverAgent) {
+          this.startProcess(session, [], undefined, false);
+        } else if (!recoverable) {
+          // The archive is historical. Drop the live flags so the UI shows a
+          // stopped terminal with restorable history instead of a ghost.
+          this.persist(session);
+        }
         if (parsed.recovered) {
           console.warn(`[PTY] Recovered terminal archive ${name}`);
           this.schedulePersist(session);
@@ -889,17 +924,31 @@ export class PTYManager {
     }
   }
 
+  /** Attach to tmux sessions that survived the restart. Archive decisions
+   * (recover / mark exited) already happened in restoreArchivedSessions. */
   private restoreLiveSessions(): void {
     for (const session of this.sessions.values()) {
-      if (!session.info.status || session.info.status !== 'running' || !session.tmuxSession) continue;
-      if (!hasTmuxSession(session.tmuxSession, this.tmuxCommand, this.tmuxSocket)) {
-        session.info.status = 'exited';
-        delete session.info.pid;
-        this.persist(session);
-        continue;
-      }
+      if (session.info.status !== 'running' || !session.tmuxSession) continue;
+      if (session.process) continue;
+      if (!hasTmuxSession(session.tmuxSession, this.tmuxCommand, this.tmuxSocket)) continue;
       this.startProcess(session, [], undefined, true);
     }
+  }
+
+  private prepareAgentRecovery(info: TerminalInfo): boolean {
+    const sessionId = info.agentSessionId
+      || (info.nodeId && !info.nodeId.startsWith('pending-') && info.nodeId !== info.launchId ? info.nodeId : undefined);
+    const command = providerResumeCommand(info.agentKind, sessionId);
+    if (!command) return false;
+    info.startupCommand = command;
+    info.startupCommandDelivery = 'shell-ready';
+    info.startupStatus = 'pending';
+    info.status = 'running';
+    info.agentStatus = undefined;
+    info.agentDetail = undefined;
+    delete info.exitCode;
+    delete info.pid;
+    return true;
   }
 
   private async refreshAgentBindings(): Promise<void> {
@@ -1001,7 +1050,10 @@ export class PTYManager {
       session.closed = false;
 
       if (session.persistent && session.tmuxSession && session.info.status === 'running') {
-        // Kill only the attach client. tmux keeps the shell and Agent alive.
+        // Persist before detaching the client. tmux can emit a final "lost tty"
+        // repaint while the attach process exits; that frame must not replace
+        // the useful Agent scrollback in the archive.
+        this.persistSync(session);
         try { session.process?.kill(); } catch { /* already exited */ }
         session.process = null;
       } else {
@@ -1010,9 +1062,9 @@ export class PTYManager {
         session.info.status = 'exited';
         session.info.updatedAt = Date.now();
         delete session.info.pid;
+        this.persistSync(session);
       }
 
-      this.persist(session);
       session.closed = true;
       if (session.persistInFlight) pending.push(session.persistInFlight);
     }

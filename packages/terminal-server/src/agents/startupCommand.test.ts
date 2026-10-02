@@ -16,6 +16,10 @@ describe('providerResumeCommand', () => {
     expect(providerStartupCommand('pi', 'pi --tui-mode regular', {})).toBe('pi --tui-mode regular');
   });
 
+  it('does not add Pi flags to a non-Pi recovery command', () => {
+    expect(providerStartupCommand('pi', 'sleep 30', {})).toBe('sleep 30');
+  });
+
   it('quotes session ids and rejects pending launch ids', () => {
     expect(providerResumeCommand('codex', "thread'quoted")).toBe("codex resume 'thread'\"'\"'quoted'");
     expect(providerResumeCommand('codex', 'pending-123')).toBeUndefined();

@@ -8,6 +8,8 @@ export interface PendingThread {
   cwd: string;
   createdAt: number;
   agentKind?: string;
+  /** Board the launch was started from; binding must land back on that board. */
+  boardId?: string;
 }
 
 interface WorkspaceState {
@@ -16,7 +18,7 @@ interface WorkspaceState {
   pending: PendingThread[];
   setLastUsed: (path: string) => void;
   toggleFavorite: (path: string) => void;
-  addPending: (cwd: string, agentKind?: string) => PendingThread;
+  addPending: (cwd: string, agentKind?: string, boardId?: string) => PendingThread;
   removePending: (id: string) => void;
 }
 
@@ -86,12 +88,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     save(next);
   },
 
-  addPending: (cwd, agentKind) => {
+  addPending: (cwd, agentKind, boardId) => {
     const thread: PendingThread = {
       id: `pending-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
       cwd,
       createdAt: Date.now(),
       agentKind,
+      boardId,
     };
     set({ pending: [...get().pending, thread] });
     return thread;

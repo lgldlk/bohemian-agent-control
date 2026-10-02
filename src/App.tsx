@@ -1,7 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import WatchGrid from '@/components/WatchGrid';
 import BoardHeader from '@/components/BoardHeader';
-import { useSpaceStore, spaceIdList } from '@/space/spaceStore';
+import { useSpaceStore, setActiveBoardIdReader, syncActiveGroups } from '@/space/spaceStore';
+import { useBoardWorkspaceStore } from '@/board/boardWorkspaceStore';
+import { useBoardMembership } from '@/board/boardMembershipStore';
+import { resolveBoardProjection } from '@/board/boardMembership';
 const BoardWorkspace = lazy(() => import('@/board/BoardWorkspace'));
 const SpaceAddModal = lazy(() => import('@/space/SpaceAddModal'));
 import { ErrorBox } from '@/components/LoadingAndError';
@@ -16,6 +19,21 @@ import { onResourceActivated } from '@/resources/resourceBus';
 const ResourceInspector = lazy(() => import('@/resources/ResourceInspector').then(({ ResourceInspector: Component }) => ({ default: Component })));
 import type { TerminalResourceRef } from '@bohemian/terminal-protocol';
 import '@/styles/pixel.css';
+
+const EMPTY_LEGACY_GROUPS: import('@/space/spaceStore').SpaceGroup[] = [];
+
+async function createBusinessGroupFrame(
+  groupId: string,
+  name: string,
+  point: { x: number; y: number },
+): Promise<void> {
+  const [{ getBoardEditor }, { createNamedGroupFrameAtPoint }] = await Promise.all([
+    import('@/board/boardEditor'),
+    import('@/board/groupFrameEditor'),
+  ]);
+  const editor = getBoardEditor();
+  if (editor) createNamedGroupFrameAtPoint(editor, groupId, name.trim(), point);
+}
 
 export default function App() {
   const { t } = useTranslation();
@@ -36,12 +54,18 @@ export default function App() {
   } = useAppState();
 
   const { tasks, error, lastUpdate, refresh, changedIds } = useTasks();
-  const groups = useSpaceStore((s) => s.groups);
-  const removeFromSpace = useSpaceStore((s) => s.removeFromSpace);
+  const activeBoardId = useBoardWorkspaceStore((state) => state.activeBoardId);
+  const groupsByBoard = useSpaceStore((state) => state.groupsByBoard);
+  const legacyGroups = groupsByBoard[activeBoardId] ?? EMPTY_LEGACY_GROUPS;
   const createGroup = useSpaceStore((s) => s.createGroup);
-  const spaceIds = useMemo(() => spaceIdList(groups), [groups]);
   const pending = useWorkspaceStore((s) => s.pending);
   const lastUsed = useWorkspaceStore((s) => s.lastUsed);
+
+  // Let the space store resolve "current board" without importing board state.
+  useEffect(() => {
+    setActiveBoardIdReader(() => useBoardWorkspaceStore.getState().activeBoardId);
+    syncActiveGroups();
+  }, []);
 
   const mergedTasks = useMemo(() => {
     const extra = pending.map(pendingToTask);
@@ -49,6 +73,18 @@ export default function App() {
     return [...tasks, ...extra.filter((task) => !ids.has(task.id))];
   }, [pending, tasks]);
   const byId = useMemo(() => new Map(mergedTasks.map((task) => [task.id, task])), [mergedTasks]);
+
+  // Board membership is the canvas projection, not a separate membership list.
+  const membership = useBoardMembership(mergedTasks);
+  // One-time bridge for boards created before canvas membership became the
+  // source of truth. Existing cards always take precedence over saved membership.
+  const boardProjection = resolveBoardProjection(membership, legacyGroups);
+  const groups = boardProjection.groups;
+  const spaceIds = boardProjection.taskIds;
+  const boardTasks = useMemo(() => {
+    const ids = new Set([...spaceIds, ...pending.map((thread) => thread.id)]);
+    return mergedTasks.filter((task) => ids.has(task.id));
+  }, [mergedTasks, pending, spaceIds]);
   const spaceTasks = useMemo(
     () => spaceIds.map((id) => byId.get(id)).filter((task): task is Task => !!task),
     [byId, spaceIds],
@@ -59,7 +95,7 @@ export default function App() {
     view,
     setView,
   );
-  const { start: startThread } = useAgentLaunchController(tasks, openTerminalForTask);
+  const { start: startThread } = useAgentLaunchController(mergedTasks, openTerminalForTask);
 
 
   const hintCwd = useMemo(() => {
@@ -81,6 +117,25 @@ export default function App() {
     return best || lastUsed;
   }, [addPresetGroup, byId, groups, lastUsed]);
 
+  function handleRemoveTaskCard(taskId: string): void {
+    void import('@/board/boardEditor').then(({ removeTaskCardShape }) => removeTaskCardShape(taskId));
+  }
+
+  function handleCreateGroup(name: string): void {
+    const groupId = createGroup(name);
+    if (groupId && addPoint) void createBusinessGroupFrame(groupId, name, addPoint);
+    closeAddModal();
+  }
+
+  function handleStartThread(cwd: string, agentKind: string, groupId?: string): void {
+    startThread(cwd, groupId, agentKind);
+    closeAddModal();
+  }
+
+  function handleBlankBoardDoubleClick(x: number, y: number, groupId?: string): void {
+    openAddModal(groupId, 'start', { x, y });
+  }
+
   return (
     <div className="px-bg-grid flex h-screen flex-col text-zinc-100">
       <BoardHeader
@@ -97,31 +152,39 @@ export default function App() {
         <main className="relative min-w-0 flex-1">
           {error && tasks.length === 0 ? (
             <ErrorBox message={error} onRetry={refresh} />
-          ) : view === 'board' ? (
-            <Suspense fallback={<div className="flex h-full items-center justify-center text-xs text-zinc-500">Loading board...</div>}>
-              <BoardWorkspace
-                tasks={mergedTasks}
-                groups={groups}
-                spaceIds={spaceIds}
-                lastUpdate={lastUpdate}
-                search={search}
-                terminalClient={terminalClient}
-                onOpenTerminal={openTerminalForTask}
-                onBlankDoubleClick={(x, y, groupId) => openAddModal(groupId, 'start', { x, y })}
-              />
-            </Suspense>
           ) : (
-            <div className="h-full overflow-y-auto p-4 sm:p-6">
-              <WatchGrid
-                groups={groups}
-                byId={byId}
-                changedIds={changedIds}
-                search={search}
-                onRemove={removeFromSpace}
-                onSelectTerminal={openTerminalForTask}
-                onAdd={openAddModal}
-              />
-            </div>
+            <Suspense fallback={<div className="flex h-full items-center justify-center text-xs text-zinc-500">Loading board...</div>}>
+              <div className="absolute inset-0">
+                <div className={view === 'board' ? 'absolute inset-0' : 'hidden'}>
+                  <BoardWorkspace
+                    boardId={activeBoardId}
+                    tasks={boardTasks}
+                    allTasks={mergedTasks}
+                    groups={groups}
+                    spaceIds={spaceIds}
+                    hasLegacyMembership={legacyGroups.some((group) => group.taskIds.length > 0)}
+                    lastUpdate={lastUpdate}
+                    search={search}
+                    terminalClient={terminalClient}
+                    onOpenTerminal={openTerminalForTask}
+                    onBlankDoubleClick={handleBlankBoardDoubleClick}
+                  />
+                </div>
+                {view === 'grid' ? (
+                  <div className="absolute inset-0 z-10 h-full overflow-y-auto bg-zinc-950 p-4 sm:p-6">
+                    <WatchGrid
+                      groups={groups}
+                      byId={byId}
+                      changedIds={changedIds}
+                      search={search}
+                      onRemove={handleRemoveTaskCard}
+                      onSelectTerminal={openTerminalForTask}
+                      onAdd={openAddModal}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </Suspense>
           )}
         </main>
       </div>
@@ -145,23 +208,8 @@ export default function App() {
             mode={addMode}
             hintCwd={hintCwd}
             onClose={closeAddModal}
-            onCreateGroup={(name) => {
-              const groupId = createGroup(name);
-              if (groupId && addPoint) {
-                void Promise.all([
-                  import('@/board/boardEditor'),
-                  import('@/board/groupFrameEditor'),
-                ]).then(([{ getBoardEditor }, { createNamedGroupFrameAtPoint }]) => {
-                  const editor = getBoardEditor();
-                  if (editor) createNamedGroupFrameAtPoint(editor, groupId, name.trim(), addPoint);
-                });
-              }
-              closeAddModal();
-            }}
-            onStart={(cwd, agentKind, groupId) => {
-              startThread(cwd, groupId, agentKind);
-              closeAddModal();
-            }}
+            onCreateGroup={handleCreateGroup}
+            onStart={handleStartThread}
           />
         </Suspense>
       ) : null}

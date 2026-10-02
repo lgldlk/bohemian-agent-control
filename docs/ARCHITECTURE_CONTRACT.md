@@ -25,10 +25,11 @@ src/hooks
   React orchestration controllers and polling bridges
 
 src/space
-  User-owned grouping and workspace membership
+  User-owned grouping and workspace membership, scoped per board
 
 src/board
-  tldraw projection and terminal shape integration
+  Board shell (boards, per-board groups, page bridge) plus tldraw projection
+  and terminal shape integration
 
 packages/terminal-ui
   xterm lifecycle, render scheduling, hydration and terminal controls
@@ -40,19 +41,16 @@ Only `useAgentLaunchController` owns the frontend launch flow:
 
 ```text
 start request
-  -> add pending thread
-  -> add pending id to space group
-  -> project pending task card
-  -> wait for task card projection
+  -> add pending thread and capture the active board id
+  -> create the pending task-card on that tldraw page (inside the chosen frame when present)
   -> create PTY with startup plan
-  -> create terminal shape beside task card
+  -> create terminal shape beside the pending card
   -> terminal inventory binds launchId to agentSessionId
-  -> rewrite the existing task card and terminal shape in place
-  -> then replace the pending space id
+  -> rewrite the existing task-card and terminal shape in place
   -> API task snapshot fills model, messages, and activity
 ```
 
-`App` renders state and delegates launch. `useBoardOperations` only handles dropping an existing task onto the board. `terminalActivity` only projects terminal state; it must not mutate workspace or space stores.
+Board membership is the set of task-card shapes on the tldraw page. `spaceStore` only supplies legacy migration/group metadata; it does not decide current membership. `App` renders state and delegates launch. `useBoardOperations` only handles dropping an existing task onto the board. `terminalActivity` only projects terminal state; it must not mutate workspace or space stores.
 
 ## Agent Phase
 
@@ -92,19 +90,37 @@ Pi agent_settled / final agent_end
 
 
 - API session state is server-owned and read through `useTasks`.
-- Pending launches are workspace-owned and live in `workspaceStore`.
-- Groups are user-owned and live in `spaceStore`.
+- Pending launches are workspace-owned and live in `workspaceStore`. A pending thread records the `boardId` it started on, so its initial card and later session binding stay on that board.
+- Business groups are tldraw frames. `spaceStore` retains legacy membership only long enough to migrate old boards; current group membership is projected from frame/card shapes.
+- Boards are user-owned and live in `boardWorkspaceStore`. The board shell owns names, order and which board is active; tldraw owns each board's page, shapes and camera.
 - PTY and terminal identity are terminal-server-owned.
 - tldraw shapes are a projection, not the source of Agent identity. A launch card is rewritten in place from `launchId` to `agentSessionId` before the space id changes.
 - A missing PTY is not an Agent deletion. Deleted Agents are represented by a `deleted` task tombstone.
+
+## Board Contract
+
+A board is a projection surface, never an Agent identity. `boardWorkspaceStore` and tldraw pages stay in sync through `useBoardPages`; no other module may map between them.
+
+- The persisted active board wins at boot. tldraw restores its own current page, but the shell only follows a page after it is hydrated.
+- `reconcileBoards` treats the tldraw page list as the authority on which boards exist: a board whose page is gone is dropped, and a page with no board record is adopted.
+- Board order and names live in the board shell; the page index follows it. Deleting a board deletes only its page and its `groupsByBoard` entry.
+- The same Agent may appear on multiple boards. "Remove from board" is a board-scoped membership change and must never delete an Agent session or stop a PTY.
+- On the first upgrade, the default board restores its saved legacy membership into task-card shapes once. If neither legacy membership nor canvas cards exist, the default board seeds cards from the current session snapshot once; the persisted recovery marker prevents later deliberate removals from being undone.
+- After recovery, the canvas is authoritative. Counts, Agent quick navigation and the Cards view derive membership from current-page task-card shapes; API task count is global and must not be presented as current-board membership.
+- `boardMembershipStore` is the shared canvas-to-Agent projection used by the header, Agent navigator and Cards view. `spaceStore` data is only a one-time legacy source and must never prune canvas shapes.
+- Deleting a board must not delete Agents, terminals or sessions. The last board cannot be deleted.
+- Board switching only changes the visible projection. PTYs, Agent sessions, terminal identity and API snapshots are global and survive a switch.
+- `boardMembershipStore` is the only join between a tldraw page and its Agent list; the Agent quick navigator, Cards view and board stats read this projection rather than combining raw stores.
+- `useBoardSync` and `listenBoardGroups` refuse to write when the editor's current page is not the board they were started for, so a hidden board cannot overwrite the visible one.
 
 ## Terminal Contract
 
 - Input is a one-way WebSocket frame and is accepted only for the current terminal owner.
 - Output is a binary frame with source byte ranges, PTY incarnation, connection generation and delivery token.
 - ACKs are batched and only release already-sent source ranges.
+- Output delivery is attached per WebSocket client; detaching a view releases only that client's stream and never pauses the PTY session.
 - A stream has a per-terminal window and a connection-wide window.
-- Snapshot restore is authoritative for the visible screen. Rendered normal-buffer scrollback is owned by `terminalScrollbackCache` and is restored above that screen across hydration/remount.
+- Snapshot hydration must follow output subscription on attach; the client buffers frames until it has established the snapshot sequence watermark.
 - Wheel input is owned only by `terminalWheel`. It scrolls the local normal
   buffer; while an alternate-screen TUI is active it uses the TUI mouse
   protocol when tracking is enabled and PageUp/PageDown otherwise. It must not
@@ -119,7 +135,7 @@ Pi agent_settled / final agent_end
 - `App.tsx` must not hardcode plugin ids, plugin page ids, plugin-specific views or plugin rendering branches; page contributions are discovered and rendered by the plugin host.
 - Terminal transport code must not modify board shapes.
 - Wheel handling must not be inlined into Agent launch, card binding, or terminal hydration.
-- Board shape removal must not imply Agent session deletion.
+- Board shape removal must not imply Agent session deletion. Board deletion must not stop a PTY or delete an Agent session.
 - Provider-specific hook payloads must be normalized before entering terminal state.
 - Fixed delays must not be used as shell readiness barriers.
 

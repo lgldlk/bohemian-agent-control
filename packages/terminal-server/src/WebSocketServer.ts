@@ -31,6 +31,7 @@ type OutputStream = {
 
 type ClientState = {
   subscriptions: Map<string, () => void>;
+  streamSubscriptionIds: Map<TerminalId, string>;
   streams: Map<string, OutputStream>;
   generation: string;
 };
@@ -94,6 +95,7 @@ export class TerminalWebSocketServer {
   private handleConnection(ws: WebSocket, _req: IncomingMessage): void {
     const state: ClientState = {
       subscriptions: new Map(),
+      streamSubscriptionIds: new Map(),
       streams: new Map(),
       generation: crypto.randomUUID(),
     };
@@ -120,6 +122,9 @@ export class TerminalWebSocketServer {
         } else if (message.type === 'unsubscribe') {
           subscriptions.get(message.id)?.();
           subscriptions.delete(message.id);
+          for (const [terminalId, subscriptionId] of state.streamSubscriptionIds) {
+            if (subscriptionId === message.id) state.streamSubscriptionIds.delete(terminalId);
+          }
         } else if (message.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong', timestamp: message.timestamp }));
         }
@@ -153,11 +158,23 @@ export class TerminalWebSocketServer {
     if (channel === 'terminal.output' && terminalId) {
       const info = this.ptyManager.getInfo(terminalId);
       if (!info?.incarnationId) return;
-      if (owner && this.owners.has(terminalId) && this.owners.get(terminalId) !== ws) {
-        this.sendError(ws, subscriptionId, 'Terminal is owned by another connection');
-        return;
+      if (owner) {
+        const previousOwner = this.owners.get(terminalId);
+        if (previousOwner && previousOwner !== ws) {
+          // A browser refresh or HMR can leave the old socket alive while the
+          // new canvas has already mounted. Transfer only this terminal's
+          // stream; other terminals on the old socket remain unaffected.
+          const previousState = this.clients.get(previousOwner);
+          const previousSubscriptionId = previousState?.streamSubscriptionIds.get(terminalId);
+          if (previousState && previousSubscriptionId) {
+            previousState.subscriptions.get(previousSubscriptionId)?.();
+            previousState.subscriptions.delete(previousSubscriptionId);
+            previousState.streamSubscriptionIds.delete(terminalId);
+          }
+          this.owners.delete(terminalId);
+        }
+        this.owners.set(terminalId, ws);
       }
-      if (owner) this.owners.set(terminalId, ws);
       const offset = this.ptyManager.getSnapshot(terminalId)?.sourceEnd ?? 0;
       const stream: OutputStream = {
         terminalId,
@@ -181,9 +198,13 @@ export class TerminalWebSocketServer {
         }
         this.pumpStream(ws, state, stream);
       });
+      state.streamSubscriptionIds.set(terminalId, subscriptionId);
       state.subscriptions.set(subscriptionId, () => {
         unsubscribe();
         if (state.streams.get(terminalId) === stream) state.streams.delete(terminalId);
+        if (state.streamSubscriptionIds.get(terminalId) === subscriptionId) {
+          state.streamSubscriptionIds.delete(terminalId);
+        }
         if (this.owners.get(terminalId) === ws) this.owners.delete(terminalId);
       });
       return;
@@ -326,19 +347,9 @@ export class TerminalWebSocketServer {
           result = { success: this.ptyManager.clearBuffer(input.terminalId) };
           break;
         }
-        case 'terminal.pause': {
-          const input = params as TerminalRPCMethods['terminal.pause']['request'];
-          result = { success: this.ptyManager.pause(input.terminalId) };
-          break;
-        }
         case 'terminal.ack': {
           const input = params as TerminalRPCMethods['terminal.ack']['request'];
           result = { success: this.ptyManager.ack(input.terminalId, input.sequence) };
-          break;
-        }
-        case 'terminal.resume': {
-          const input = params as TerminalRPCMethods['terminal.resume']['request'];
-          result = { success: this.ptyManager.resume(input.terminalId) };
           break;
         }
         case 'terminal.history': {

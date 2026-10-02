@@ -139,16 +139,8 @@ export interface TerminalRPCMethods {
     request: { terminalId: TerminalId };
     response: { success: boolean };
   };
-  'terminal.pause': {
-    request: { terminalId: TerminalId };
-    response: { success: boolean };
-  };
   'terminal.ack': {
     request: { terminalId: TerminalId; sequence: number };
-    response: { success: boolean };
-  };
-  'terminal.resume': {
-    request: { terminalId: TerminalId };
     response: { success: boolean };
   };
   'terminal.history': {

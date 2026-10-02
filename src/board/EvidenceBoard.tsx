@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AssetToolbarItem,
   CheckBoxToolbarItem,
@@ -42,7 +42,6 @@ import {
   useValue,
   XBoxToolbarItem,
   type Editor,
-  type TLGridProps,
   type TLThemes,
   type TLUiOverrides,
 } from 'tldraw';
@@ -60,27 +59,30 @@ import { TaskCardShapeUtil } from './TaskCardShape';
 import { TerminalShapeUtil } from './TerminalShape';
 import { ResourceShapeUtil } from './ResourceShape';
 import { importDroppedFilesToBoard } from './resourceDrop';
-import { useBoardTerminals } from './useBoardTerminals';
 import { getBoardEditor, setBoardEditor } from './boardEditor';
 import { createEmptyBusinessGroupAtPoint, createGroupFromSelection, ungroupSelection } from './groupFrameEditor';
 import { listenBoardGroups } from './groupSync';
-import { useBoardCanvasEvents, useBoardNodeCascade, useGroupActionEvents } from './events';
+import { useBoardCanvasEvents } from './events';
 import { bindScreenSizedGroupTitles } from './groupFrameTitle';
 import { arrangeGroupFrame, arrangeWholeBoard } from './boardArrangeEditor';
 import { BoardPluginOverlayHost } from './plugins/hosts/BoardPluginOverlayHost';
 import { BoardPluginPageOverlayHost, BoardPluginPanel } from './plugins/hosts/BoardPluginPanelHost';
 import { BoardPluginToolbarButtons } from './plugins/hosts/BoardPluginToolbarHost';
-import { mountBoardPluginRuntime } from './plugins/runtime';
 import { BoardPluginRuntimeProvider } from './plugins/runtimeScope';
 import { BoardPluginRuntimeCore } from './plugins/runtimeCore';
 import { PluginContentShapeUtil } from './plugins/PluginContentShape';
 import AgentQuickNavigator from './AgentQuickNavigator';
+import { useBoardWorkspaceStore } from './boardWorkspaceStore';
 import { ResourceActivationRuntime } from './ResourceActivationRuntime';
 import { isBusinessGroupFrame } from './boardShapes';
 import { FRAME_DEFAULT_H, FRAME_DEFAULT_W } from './groupFrame';
+import { GroupActionBar, PixelGrid } from './BoardCanvasDecorations';
+import { BoardPageBridge, BoardPluginRuntimeBridge, BoardTerminalRuntime } from './BoardRuntimeBridges';
 
 interface EvidenceBoardProps {
   tasks?: Task[];
+  /** Every known Agent, used for per-board counts that include hidden boards. */
+  allTasks?: Task[];
   changedIds?: string[];
   search?: string;
   terminalClient: TerminalClient;
@@ -154,7 +156,8 @@ function CanvasOverlays({
       <BoardPluginPageOverlayHost tasks={tasks} />
       <BoardPluginPanel tasks={tasks} />
       <BoardPluginOverlayHost tasks={tasks} />
-      <BoardPluginRuntime tasks={tasks} runtime={pluginRuntime} />
+      <BoardPluginRuntimeBridge tasks={tasks} runtime={pluginRuntime} />
+      <BoardPageBridge />
       <ResourceActivationRuntime />
       <BoardTerminalRuntime client={client} />
       <BoardSearch query={search ?? ''} />
@@ -216,21 +219,6 @@ function BoardSearch({ query }: { query: string }) {
     });
     return () => search.cancel();
   }, [editor, query]);
-  return null;
-}
-
-function BoardPluginRuntime({ tasks, runtime }: { tasks: readonly Task[]; runtime: BoardPluginRuntimeCore }) {
-  const editor = useEditor();
-  const tasksRef = useRef(tasks);
-  tasksRef.current = tasks;
-  useEffect(() => mountBoardPluginRuntime(editor, tasksRef, runtime), [editor, runtime]);
-  return null;
-}
-
-function BoardTerminalRuntime({ client }: { client: TerminalClient }) {
-  const editor = useEditor();
-  useBoardTerminals(client, editor);
-  useBoardNodeCascade(editor);
   return null;
 }
 
@@ -486,82 +474,6 @@ const BOARD_OVERRIDES: TLUiOverrides = {
   },
 };
 
-/** 选中任务卡后出现:编成一组 / 移出分组。框选本身不建组。 */
-function GroupActionBar() {
-  const { t } = useTranslation();
-  const { visible, canGroup, canUngroup, group, ungroup, isolate } = useGroupActionEvents();
-  if (!visible) return null;
-
-  return (
-    <div className="tl-group-bar" onPointerDown={isolate}>
-      {canGroup && (
-        <button
-          type="button"
-          className="px-btn px-btn-primary box-shadow-margin h-8 px-3 pixel-font text-[8px]"
-          onClick={group}
-        >
-          GROUP
-        </button>
-      )}
-      {canUngroup && (
-        <button
-          type="button"
-          className="px-btn px-btn-dark box-shadow-margin h-8 px-3 pixel-font text-[8px]"
-          onClick={ungroup}
-        >
-          UNGROUP
-        </button>
-      )}
-      <span className="tl-group-bar__hint">
-        {canGroup ? t('board.groupHint') : t('board.ungroupHint')}
-      </span>
-    </div>
-  );
-}
-
-/** PixelAct 线网格:随相机平移/缩放,细线+每 4 格一条稍亮的主线 */
-function PixelGrid({ x, y, z, size }: TLGridProps) {
-  const editor = useEditor();
-  const rawId = useId().replace(/:/g, '');
-  const steps = editor.options.gridSteps;
-  return (
-    <svg className="tl-grid" aria-hidden="true">
-      <defs>
-        {steps.map(({ min, mid, step }, i) => {
-          const s = step * size * z;
-          if (s < 4) return null;
-          const xo = (((x * z) % s) + s) % s;
-          const yo = (((y * z) % s) + s) % s;
-          const t = z < mid ? Math.max(0, (z - min) / Math.max(mid - min, 0.001)) : 1;
-          const isMajor = step >= 4;
-          const alpha = (isMajor ? 0.08 : 0.035) * t;
-          return (
-            <pattern
-              key={i}
-              id={`${rawId}-${step}`}
-              width={s}
-              height={s}
-              patternUnits="userSpaceOnUse"
-              x={xo}
-              y={yo}
-            >
-              <path
-                d={`M ${s} 0 L 0 0 0 ${s}`}
-                fill="none"
-                stroke={`rgba(244,244,245,${alpha})`}
-                strokeWidth={0.5}
-              />
-            </pattern>
-          );
-        })}
-      </defs>
-      {steps.map(({ step }, i) => (
-        <rect key={i} width="100%" height="100%" fill={`url(#${rawId}-${step})`} />
-      ))}
-    </svg>
-  );
-}
-
 /**
  * 警匪片无限白板(tldraw):
  * - 任务卡片 = 自定义 task-card shape(深色)
@@ -572,6 +484,7 @@ function PixelGrid({ x, y, z, size }: TLGridProps) {
  */
 export default function EvidenceBoard({
   tasks = [],
+  allTasks = [],
   search,
   terminalClient,
   onOpenTerminal,
@@ -638,7 +551,9 @@ export default function EvidenceBoard({
           editor.updateInstanceState({ isGridMode: true });
           editor.updateDocumentSettings({ gridSize: 8 });
           setBoardEditor(editor);
-          const stopGroups = listenBoardGroups(editor);
+          const store = useBoardWorkspaceStore.getState();
+  const activeBoardId = store.activeBoardId;
+  const stopGroups = listenBoardGroups(editor, activeBoardId);
           return () => {
             stopGroups();
             if (getBoardEditor() === editor) setBoardEditor(null);

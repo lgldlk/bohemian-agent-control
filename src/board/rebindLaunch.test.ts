@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Editor } from 'tldraw';
 import type { TerminalInfo } from '@bohemian/terminal-protocol';
-import { useSpaceStore } from '@/space/spaceStore';
 import { setBoardTasks } from './taskSnapshot';
 import { rebindLaunchCards, sessionRebindSources } from './rebindLaunch';
 
@@ -21,9 +20,6 @@ function terminal(overrides: Partial<TerminalInfo>): TerminalInfo {
 
 afterEach(() => {
   setBoardTasks([]);
-  useSpaceStore.setState({
-    groups: [{ id: 'default', name: '未分组', taskIds: [], collapsed: false }],
-  });
 });
 
 describe('sessionRebindSources', () => {
@@ -92,9 +88,6 @@ describe('sessionRebindSources', () => {
         }
       },
     } as unknown as Editor;
-    useSpaceStore.setState({
-      groups: [{ id: 'default', name: '未分组', taskIds: ['session-a'], collapsed: false }],
-    });
 
     const previous = terminal({
       launchId: 'pending-1',
@@ -119,7 +112,8 @@ describe('sessionRebindSources', () => {
       tokenCount: 0,
     });
     expect(shapes[1].props.nodeId).toBe('session-b');
-    expect(useSpaceStore.getState().groups[0].taskIds).toEqual(['session-b']);
+    // Membership is the canvas: the card was rebound, no side list to assert.
+    expect(shapes.filter((shape) => shape.type === 'task-card').map((s) => s.props.taskId)).toEqual(['session-b']);
   });
 
   it('adopts an existing resumed topic without creating a duplicate card', () => {
@@ -169,13 +163,6 @@ describe('sessionRebindSources', () => {
         }
       },
     } as unknown as Editor;
-    useSpaceStore.setState({
-      groups: [
-        { id: 'active', name: 'Active', taskIds: ['session-a'], collapsed: false },
-        { id: 'history', name: 'History', taskIds: ['session-b'], collapsed: false },
-      ],
-    });
-
     const previous = terminal({ launchId: 'pending-1', nodeId: 'session-a', agentSessionId: 'session-a' });
     const next = terminal({ launchId: 'pending-1', nodeId: 'session-b', agentSessionId: 'session-b' });
 
@@ -183,9 +170,7 @@ describe('sessionRebindSources', () => {
     expect(shapes.filter((shape) => shape.type === 'task-card').map((shape) => shape.props.taskId)).toEqual(['session-b']);
     expect(shapes.find((shape) => shape.id === 'shape:resumed')?.props.customTitle).toBe('Keep topic B');
     expect(shapes.find((shape) => shape.id === 'shape:terminal')?.props.nodeId).toBe('session-b');
-    expect(useSpaceStore.getState().groups).toEqual([
-      { id: 'active', name: 'Active', taskIds: [], collapsed: false },
-      { id: 'history', name: 'History', taskIds: ['session-b'], collapsed: false },
-    ]);
+    // The duplicate old-topic card is deleted from the canvas; the resumed one stays.
+    expect(shapes.some((shape) => shape.id === 'shape:old')).toBe(false);
   });
 });

@@ -42,7 +42,11 @@ import {
   TerminalRenderController,
   TERMINAL_OUTPUT_BACKLOG_MAX_CHARS,
 } from '../terminalRenderController';
-import { resolveTerminalPresentation, isTerminalPresentationSuspended, type TerminalPresentationState } from '../terminalPresentation';
+import {
+  resolveTerminalPresentation,
+  isTerminalPresentationSuspended,
+  type TerminalPresentationState,
+} from '../terminalPresentation';
 import {
   captureRenderedScrollback,
   prependScrollback,
@@ -103,6 +107,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   const sequenceRef = useRef(0);
   const hydrationRef = useRef(0);
   const hydrationPromiseRef = useRef<Promise<void> | null>(null);
+  const hydrationQueuedRef = useRef(false);
   const hydratingRef = useRef(false);
   const pendingOutputRef = useRef<TerminalOutputFrame[]>([]);
   const pendingOutputCharsRef = useRef(0);
@@ -322,11 +327,19 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     }
   }, [cacheRenderedScrollback, client, fit, refreshVisualState, reportStatus, terminalId]);
 
-  const requestHydrate = useCallback((): Promise<void> => {
+  const requestHydrate = useCallback((forceAfterCurrent = false): Promise<void> => {
     const current = hydrationPromiseRef.current;
-    if (current) return current;
+    if (current) {
+      if (!forceAfterCurrent) return current;
+      hydrationQueuedRef.current = true;
+      return current;
+    }
     const next = hydrate().finally(() => {
-      if (hydrationPromiseRef.current === next) hydrationPromiseRef.current = null;
+      if (hydrationPromiseRef.current !== next) return;
+      hydrationPromiseRef.current = null;
+      if (!hydrationQueuedRef.current) return;
+      hydrationQueuedRef.current = false;
+      if (presentationRef.current !== 'cold') void requestHydrate();
     });
     hydrationPromiseRef.current = next;
     return next;
@@ -525,7 +538,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     const focusListener = () => onFocusRef.current?.();
     container.addEventListener('pointerdown', focusListener);
 
-    const unsubscribeOutput = client.subscribeToOutput(terminalId, (frame) => {
+    const outputSubscription = client.subscribeToOutput(terminalId, (frame) => {
       const { sequence } = frame;
       if (hydratingRef.current) {
         pendingOutputRef.current.push(frame);
@@ -562,13 +575,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       reportStatus({
         phase: state === 'connected' ? 'hydrating' : state === 'connecting' ? 'connecting' : 'reconnecting',
       });
-      if (state === 'connected') void requestHydrate();
+      if (state === 'connected' && presentationRef.current !== 'cold') void requestHydrate();
     });
     // Terminal panes are commonly mounted after the shared client has already
     // connected and the inventory has rendered. In that case no future
     // connection event fires, so waiting only on the subscription would leave
     // the pane with live output but no historical snapshot.
-    if (client.getConnectionState() === 'connected') {
+    if (client.getConnectionState() === 'connected' && presentationRef.current !== 'cold') {
       void requestHydrate();
     }
 
@@ -593,21 +606,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         physicalWidth: rect.width,
         physicalHeight: rect.height,
       });
-      const previous = presentationRef.current;
       presentationRef.current = next;
-      renderController.setSuspended(isTerminalPresentationSuspended(next));
-      if (next !== 'cold' && activeRef.current) requestWebglRef.current?.();
-      if (previous === next) return;
-      if (next === 'cold') {
-        void client.pauseTerminal(terminalId).catch(() => false);
-        return;
-      }
-      if (previous === 'cold') {
-        void client.resumeTerminal(terminalId)
-          .catch(() => false)
-          .finally(() => {
-            if (presentationRef.current === next) void requestHydrate().finally(refreshVisualState);
-          });
+      const shouldSuspend = isTerminalPresentationSuspended(next);
+      renderController.setSuspended(shouldSuspend);
+      const attachmentChanged = outputSubscription.setActive(!shouldSuspend);
+      if (!shouldSuspend && activeRef.current) requestWebglRef.current?.();
+      if (attachmentChanged && !shouldSuspend) {
+        void requestHydrate(true).finally(refreshVisualState);
       }
     };
     let intersecting = true;
@@ -658,6 +663,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // Do not let the new mount reuse a promise whose generation was just
       // invalidated; that promise will intentionally no-op after cleanup.
       hydrationPromiseRef.current = null;
+      hydrationQueuedRef.current = false;
       hydratingRef.current = false;
       pendingOutputRef.current = [];
       pendingOutputCharsRef.current = 0;
@@ -680,7 +686,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       detachWheel();
       detachSelection();
       detachPaste();
-      unsubscribeOutput();
+      outputSubscription.unsubscribe();
       unsubscribeExit();
       unsubscribeConnection();
       renderController.dispose();

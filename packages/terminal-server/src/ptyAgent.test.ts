@@ -74,7 +74,7 @@ describe('listCodexSessionHeaders', () => {
       type: 'session_meta',
       payload: {
         session_id: '01a0e63d-71fb-70d3-a72f-5936d8d993b6',
-        cwd: '/Users/lgldl/Desktop/work/reverse_work',
+        cwd: '/tmp/bohemian-test-work',
         timestamp: '2026-09-28T04:19:41.772Z',
         base_instructions: { text: 'x'.repeat(12_000) },
       },
@@ -82,7 +82,7 @@ describe('listCodexSessionHeaders', () => {
     const previous = process.env.CODEX_HOME;
     process.env.CODEX_HOME = home;
     try {
-      await expect(listCodexSessionHeaders('/Users/lgldl/Desktop/work/reverse_work')).resolves.toEqual([
+      await expect(listCodexSessionHeaders('/tmp/bohemian-test-work')).resolves.toEqual([
         { id: '01a0e63d-71fb-70d3-a72f-5936d8d993b6', startedAt: Date.parse('2026-09-28T04:19:41.772Z') },
       ]);
       await expect(listCodexSessionHeaders('/tmp/other')).resolves.toEqual([]);

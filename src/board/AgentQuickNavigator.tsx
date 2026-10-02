@@ -7,6 +7,7 @@ import AgentMark from '@/components/AgentMark';
 import { projectCardStatus, type BoardAgentStatus } from '@/lib/boardStatus';
 import { useBoardAgentActivityMap, useBoardProcessStateMap } from './terminalActivity';
 import { isBusinessGroupFrame } from './boardShapes';
+import BoardSwitcher from './BoardSwitcher';
 import {
   buildAgentNavigatorGroups,
   countAgentNavigatorFilters,
@@ -47,12 +48,12 @@ export default function AgentQuickNavigator({ tasks, onOpenTerminal }: AgentQuic
   const editor = useEditor();
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [boardMenuOpen, setBoardMenuOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<AgentNavigatorFilter>('all');
   const searchRef = useRef<HTMLInputElement>(null);
   const processStates = useBoardProcessStateMap();
   const activities = useBoardAgentActivityMap();
-
   const projections = useValue<CardProjection[]>(
     'agent quick navigator cards',
     () => {
@@ -132,6 +133,11 @@ export default function AgentQuickNavigator({ tasks, onOpenTerminal }: AgentQuic
     };
   }, [open]);
 
+  // The board menu is a sibling segment of the same control; only one opens.
+  useEffect(() => {
+    if (boardMenuOpen) setOpen(false);
+  }, [boardMenuOpen]);
+
   const focusAgent = (entry: AgentNavigatorEntry) => {
     const shape = editor.getShape(entry.shapeId as TLShapeId);
     if (!shape) return;
@@ -141,36 +147,45 @@ export default function AgentQuickNavigator({ tasks, onOpenTerminal }: AgentQuic
 
   return (
     <div
-      className="pointer-events-auto absolute left-3 top-3 z-[160000]"
+      className="pointer-events-none absolute left-3 top-3 z-[160000] flex max-w-[calc(100vw-24px)] items-start"
       onPointerDown={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
     >
-      {!open ? (
+      {/* One segmented control: Agents and boards share a single frame. */}
+      <div className="pointer-events-auto flex h-8 items-stretch border border-zinc-700 bg-[#1c1c22] shadow-lg">
         <button
           type="button"
-          aria-expanded={false}
+          aria-expanded={open}
           aria-controls="agent-quick-navigator"
-          title={t('board.agentNavigator.open')}
-          onClick={() => setOpen(true)}
-          className="px-btn px-btn-dark box-shadow-margin flex h-9 items-center gap-2 px-3 text-xs text-zinc-200"
+          title={t(open ? 'board.agentNavigator.close' : 'board.agentNavigator.open')}
+          onClick={() => setOpen(!open)}
+          className={`flex items-center gap-1.5 px-2.5 text-xs transition-colors ${
+            open ? 'bg-zinc-100 text-black' : 'text-zinc-200 hover:bg-zinc-800 hover:text-white'
+          }`}
         >
-          <Bot className="h-4 w-4" />
-          <span className="pixel-font text-[8px]">AGENTS</span>
-          <span className="min-w-5 border-l border-zinc-700 pl-2 text-right text-[11px] tabular-nums text-zinc-400">
+          <Bot className="h-3.5 w-3.5" />
+          <span className={`text-[10px] tabular-nums ${open ? 'text-zinc-600' : 'text-zinc-500'}`}>
             {entries.length}
           </span>
         </button>
-      ) : (
+        <span className="w-px shrink-0 bg-zinc-700" aria-hidden="true" />
+        <BoardSwitcher onOpenChange={setBoardMenuOpen} />
+      </div>
+
+      {open ? (
+        <div className="pointer-events-auto absolute left-0 top-[calc(100%+5px)]">
         <section
           id="agent-quick-navigator"
           aria-label={t('board.agentNavigator.title')}
-          className="flex max-h-[min(560px,65vh)] w-[min(320px,calc(100vw-24px))] flex-col border border-zinc-700 bg-zinc-950 shadow-2xl"
+          className="flex max-h-[min(560px,65vh)] w-[min(300px,calc(100vw-24px))] flex-col border border-zinc-700 bg-zinc-950 shadow-2xl"
         >
-          <div className="flex shrink-0 items-center gap-2 border-b border-zinc-800 px-3 py-2">
-            <Bot className="h-4 w-4 text-zinc-300" />
-            <span className="pixel-font text-[9px] text-zinc-100">AGENTS</span>
-            <span className="text-[11px] tabular-nums text-zinc-500">{entries.length}</span>
+          <div className="flex shrink-0 items-center gap-1.5 border-b border-zinc-800 px-2.5 py-2">
+            <Bot className="h-3.5 w-3.5 text-zinc-300" />
+            <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-300">
+              {t('board.agentNavigator.title')}
+            </span>
+            <span className="text-[10px] tabular-nums text-zinc-500">{entries.length}</span>
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -284,7 +299,8 @@ export default function AgentQuickNavigator({ tasks, onOpenTerminal }: AgentQuic
             )}
           </div>
         </section>
-      )}
+        </div>
+      ) : null}
     </div>
   );
 }

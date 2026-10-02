@@ -65,11 +65,3 @@ export function useResourcePerformanceSettings(): ResourcePerformanceSettings {
 export function resourcePerformanceStorage(): BoardPluginSettingsStorage {
   return createBoardPluginSettingsStorage(RESOURCE_PERFORMANCE_PLUGIN_ID);
 }
-
-export function shouldDeferResource(
-  settings: ResourcePerformanceSettings,
-  resourceWindowCount: number,
-  active: boolean,
-): boolean {
-  return settings.enabled && resourceWindowCount >= settings.resourceThreshold && !active;
-}

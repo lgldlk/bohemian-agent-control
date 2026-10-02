@@ -73,12 +73,17 @@ export class TerminalClient {
       this.ws = ws;
       ws.binaryType = 'arraybuffer';
       ws.onopen = () => {
+        if (this.ws !== ws) {
+          ws.close();
+          return;
+        }
         this.setConnectionState('connected');
         this.restoreSubscriptions();
         this.startHeartbeat();
         this.onConnect?.();
       };
       ws.onmessage = (event) => {
+        if (this.ws !== ws) return;
         try {
           if (typeof event.data !== 'string') {
             const frame = decodeTerminalOutputFrame(event.data as ArrayBuffer);
@@ -90,11 +95,13 @@ export class TerminalClient {
           this.onError?.(error instanceof Error ? error : new Error('Invalid server message'));
         }
       };
-      ws.onclose = () => this.handleDisconnect();
-      ws.onerror = () => this.onError?.(new Error('Terminal WebSocket error'));
+      ws.onclose = () => this.handleDisconnect(ws);
+      ws.onerror = () => {
+        if (this.ws === ws) this.onError?.(new Error('Terminal WebSocket error'));
+      };
     } catch (error) {
       this.onError?.(error instanceof Error ? error : new Error('Failed to connect'));
-      this.handleDisconnect();
+      this.handleDisconnect(this.ws ?? undefined);
     }
   }
 
@@ -113,7 +120,11 @@ export class TerminalClient {
     this.setConnectionState('disconnected');
   }
 
-  private handleDisconnect(): void {
+  private handleDisconnect(ws?: WebSocket): void {
+    // A socket from a previous React effect / reconnect attempt may close
+    // after a newer socket has already taken ownership. It must not tear down
+    // the current connection or change its state.
+    if (ws && this.ws !== ws) return;
     const wasConnected = this.connectionState === 'connected';
     this.ws = null;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);

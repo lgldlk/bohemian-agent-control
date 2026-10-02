@@ -134,7 +134,8 @@ useBoardSync({
 ### 1. 职责清晰
 - **useBoardSync**：数据同步逻辑
 - **EvidenceBoard**：UI 渲染和用户交互
-- **boardSync.ts**：底层白板操作 API
+- **boardSync.ts**：空间归属和白板形状的同步
+- **boardPlacement.ts / groupFrame.ts**：画板落位和分组框规则，分开存放
 
 ### 2. 易于维护
 - 数据同步逻辑集中在一个 hook 中
@@ -147,7 +148,7 @@ useBoardSync({
 
 ### 4. 可扩展
 - 需要新的数据同步？在 `useBoardSync` 中添加 useEffect
-- 需要新的白板操作 API？在 `boardSync.ts` 中添加函数
+- 需要新的白板操作？按文件单一职责放进 `boardSync.ts`、`boardPlacement.ts` 或 `groupFrame.ts`
 - 需要新的用户交互？在 `EvidenceBoard` 中添加事件处理
 
 ## 向后兼容性

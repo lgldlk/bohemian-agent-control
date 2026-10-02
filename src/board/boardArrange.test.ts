@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { folderKeyOf } from '@/domain/folderKey';
-import { FRAME_DEFAULT_H, FRAME_DEFAULT_W, FRAME_PAD, FRAME_TITLE } from './groupFrame';
+import {
+  FRAME_DEFAULT_H,
+  FRAME_DEFAULT_W,
+  FRAME_HEADING_SCREEN_HEIGHT,
+  FRAME_PAD,
+  FRAME_TITLE,
+} from './groupFrame';
 import {
   ARRANGE_GAP,
   arrangeBoard,
@@ -148,7 +154,7 @@ describe('arrangeBoard', () => {
     expect(plan.frames[0]).toMatchObject({ x: 0, y: 0, w: FRAME_DEFAULT_W, h: FRAME_DEFAULT_H });
     expect(plan.frames[1]).toMatchObject({
       x: 0,
-      y: FRAME_DEFAULT_H + ARRANGE_GAP,
+      y: FRAME_DEFAULT_H + ARRANGE_GAP + FRAME_HEADING_SCREEN_HEIGHT,
       w: inside.w,
       h: inside.h,
     });
@@ -160,7 +166,30 @@ describe('arrangeBoard', () => {
     expect(plan.shapes.find((shape) => shape.id === 'out')).toMatchObject({
       parentId: null,
       x: 0,
-      y: FRAME_DEFAULT_H + ARRANGE_GAP + inside.h + ARRANGE_GAP,
+      y: FRAME_DEFAULT_H
+        + ARRANGE_GAP
+        + FRAME_HEADING_SCREEN_HEIGHT
+        + inside.h
+        + ARRANGE_GAP,
     });
+  });
+
+  it('reserves the next group title above its frame at the current zoom clearance', () => {
+    const cluster: ArrangeCluster = { folder: '/repo', card: card('card', 0, 0), terminals: [] };
+    const titleClearance = 80;
+    const plan = arrangeBoard({
+      groups: [
+        { id: 'first', x: 0, y: 0, clusters: [cluster] },
+        { id: 'second', x: 0, y: 900, clusters: [
+          { folder: '/repo', card: card('card-2', 0, 0), terminals: [] },
+        ] },
+      ],
+      ungrouped: [],
+      titleClearance,
+    });
+    const first = plan.frames[0];
+    const second = plan.frames[1];
+    expect(second.y - (first.y + first.h)).toBe(ARRANGE_GAP + titleClearance);
+    expect(second.y - titleClearance).toBe(first.y + first.h + ARRANGE_GAP);
   });
 });

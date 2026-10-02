@@ -87,7 +87,7 @@ Pi agent_settled / final agent_end
   -> projectCardStatus renders the card
 ```
 
-`ps`, PTY liveness, and `/api/sessions` are correlation and fallback signals only. They cannot create task `running`; an open terminal is a terminal fact, not task activity. The terminal server installs `bohemian-agent-status.js` into Pi's global extension directory so new Pi sessions receive the event bridge. Existing sessions must reload their extensions or restart once.
+`ps`, PTY liveness, and `/api/sessions` are correlation and fallback signals only. They cannot create task `running`; an open terminal is a terminal fact, not task activity. The terminal server installs the Pi bridge into its own runtime directory and injects it with `--extension`. Claude receives a project-runtime `--settings` file with managed lifecycle hooks. Codex receives a project-runtime `CODEX_HOME` overlay with managed `hooks.json`; user configuration is mirrored without rewriting the user's home. Board-launched Codex terminals use `--no-daemon` because the managed runtime path is not guaranteed to fit the platform's Unix socket path limit. Codex hook trust remains explicit and is never bypassed automatically. A pending Codex PTY binds to the rollout session created in that working directory the same way Pi binds from session headers, so the launch card can be rewritten before hook events arrive. Codex turn state comes from that rollout: `task_started` is working and `task_complete` is idle. Hook events still win when they are newer. When a provider changes the active session inside an existing PTY, that provider session becomes the terminal's active topic identity. Pi `session_start`, Claude Code `SessionStart` (`startup`, `resume`, `clear`, or `fork`), and Codex `SessionStart` (`startup`, `resume`, or `clear`) explicitly authorize the identity switch; `compact` and late stop/end events do not. The card and terminal shape are rebound to the new or resumed topic, stale title, model, usage, and task status are cleared until the API snapshot arrives, and an already-present resumed card is reused instead of duplicated. Opening the terminal does not create `running`.
 
 
 
@@ -104,14 +104,19 @@ Pi agent_settled / final agent_end
 - Output is a binary frame with source byte ranges, PTY incarnation, connection generation and delivery token.
 - ACKs are batched and only release already-sent source ranges.
 - A stream has a per-terminal window and a connection-wide window.
-- Snapshot restore is authoritative for the visible screen. Rendered scrollback is owned by `terminalScrollbackCache` and must be restored above that screen.
-- Wheel input is owned only by `terminalWheel`. It always scrolls the local buffer and never becomes PTY arrow keys or mouse reports. It must not consult Agent state or `mouseTrackingMode`.
+- Snapshot restore is authoritative for the visible screen. Rendered normal-buffer scrollback is owned by `terminalScrollbackCache` and is restored above that screen across hydration/remount.
+- Wheel input is owned only by `terminalWheel`. It scrolls the local normal
+  buffer; while an alternate-screen TUI is active it uses the TUI mouse
+  protocol when tracking is enabled and PageUp/PageDown otherwise. It must not
+  become arrow keys or consult Agent state.
 - Process liveness, TUI activity, and session records are separate axes in `resolveStatusAxes`. UI lamps must render the axes that were observed. A live process is not TUI working, and a pending record is not process state.
+- Reopening or restarting an exited bound Agent terminal must derive the provider resume command from its bound session id. It must resume that conversation rather than start a new one.
 - A reconnect must never reuse an old delivery token or incarnation.
 
 ## Forbidden Coupling
 
 - UI components must not call `useSpaceStore.getState()` to reconcile Agent lifecycle.
+- `App.tsx` must not hardcode plugin ids, plugin page ids, plugin-specific views or plugin rendering branches; page contributions are discovered and rendered by the plugin host.
 - Terminal transport code must not modify board shapes.
 - Wheel handling must not be inlined into Agent launch, card binding, or terminal hydration.
 - Board shape removal must not imply Agent session deletion.

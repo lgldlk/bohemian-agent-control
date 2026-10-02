@@ -65,7 +65,7 @@ export function ResourcePerformanceSettingsPanel({ settingsStorage }: BoardPlugi
 
 function HelpTooltip({ text }: { text: string }) {
   return (
-    <span className="group relative inline-flex" tabIndex={0}>
+    <span className="group relative inline-flex" tabIndex={0} title={text} aria-label={text}>
       <CircleHelp size={13} className="text-zinc-600 group-hover:text-zinc-200 group-focus:text-zinc-200" />
       <span className="pointer-events-none absolute bottom-full left-0 z-20 mb-2 hidden w-64 border border-zinc-700 bg-zinc-950 p-2 text-[10px] leading-4 text-zinc-300 shadow-2xl group-hover:block group-focus:block">
         {text}

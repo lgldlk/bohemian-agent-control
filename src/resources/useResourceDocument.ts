@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isResourceRefreshForced, useResourceRefreshRevision } from './resourceRefresh';
 import type { TerminalResourceRef } from '@bohemian/terminal-protocol';
 import { findBoardResourceProvider } from '@/board/plugins/resourceRuntime';
 import type { BoardResourceDocument } from '@/board/plugins/resourceTypes';
@@ -17,9 +18,12 @@ export function useResourceDocument(
   const [state, setState] = useState<ResourceDocumentState>({ status: 'loading' });
   const provider = findBoardResourceProvider(resource);
 
+  const revision = useResourceRefreshRevision(resource);
+  const shouldDefer = defer && !isResourceRefreshForced(resource);
+
   useEffect(() => {
     const controller = new AbortController();
-    if (defer) {
+    if (shouldDefer) {
       setState({ status: 'deferred' });
       return () => controller.abort();
     }
@@ -39,7 +43,7 @@ export function useResourceDocument(
         }
       });
     return () => controller.abort();
-  }, [provider, resource, defer]);
+  }, [provider, resource, defer, revision]);
 
   return state;
 }

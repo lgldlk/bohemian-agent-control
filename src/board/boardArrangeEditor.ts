@@ -12,7 +12,7 @@ import { folderKeyOf } from '@/domain/folderKey';
 import { useBoardLayoutStore } from './boardLayoutStore';
 import { emitBoardPluginEvent } from './plugins/runtime';
 import { TERMINAL_DEFAULT_H, TERMINAL_DEFAULT_W } from './boardPlacement';
-import { FRAME_PAD } from './groupFrame';
+import { FRAME_PAD, frameHeadingPageHeight } from './groupFrame';
 import { isBusinessGroupFrame } from './boardShapes';
 
 interface Measured {
@@ -147,7 +147,13 @@ export function arrangeWholeBoard(editor: Editor): boolean {
   );
   if (groups.length === 0 && ungrouped.length === 0) return false;
   const perRow = useBoardLayoutStore.getState().agentsPerRow;
-  const changed = applyPlan(editor, arrangeBoard({ groups, ungrouped, perRow }), '整理画板', true);
+  const titleClearance = frameHeadingPageHeight(editor.getZoomLevel());
+  const changed = applyPlan(
+    editor,
+    arrangeBoard({ groups, ungrouped, perRow, titleClearance }),
+    '整理画板',
+    true,
+  );
   if (changed) emitBoardPluginEvent({ type: 'arrange-completed', scope: 'board' });
   return changed;
 }

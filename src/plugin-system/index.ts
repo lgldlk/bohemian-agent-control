@@ -11,10 +11,10 @@ export {
   RESOURCE_PERFORMANCE_PLUGIN_ID,
   readResourcePerformanceSettings,
   resourcePerformanceStorage,
-  shouldDeferResource,
   useResourcePerformanceSettings,
   writeResourcePerformanceSettings,
 } from './resourcePerformance';
+export type { ResourcePerformanceSettings } from './resourcePerformance';
 export {
   createBoardPluginSettingsStorage,
   subscribeBoardPluginSettings,

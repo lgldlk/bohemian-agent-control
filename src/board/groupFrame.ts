@@ -6,7 +6,15 @@
 import { BOARD_PLACE_GAP } from './boardPlacement';
 
 export const FRAME_PAD = 36;
+/** 组内内容顶部保留量。标题实际绘制在 frame 外部上方。 */
 export const FRAME_TITLE = 32;
+/** 业务分组标题的屏幕占位：36px 标题高度 + 4px 底部留白。 */
+export const FRAME_HEADING_SCREEN_HEIGHT = 40;
+
+/** 固定屏幕尺寸的标题换算为当前画布页面坐标高度。 */
+export function frameHeadingPageHeight(zoom: number): number {
+  return FRAME_HEADING_SCREEN_HEIGHT / Math.max(zoom, 0.01);
+}
 /** 可选的单边上限。默认不封顶，组会长到刚好包住新内容。 */
 export const FRAME_GROW_STEP = 360;
 /** 空组：两张卡并排（36+336+320+36）后再留一列空隙。 */

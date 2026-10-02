@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { ExternalLink, RefreshCw } from 'lucide-react';
 import {
   HTMLContainer,
   Rectangle2d,
@@ -14,12 +15,16 @@ import {
   type TLShapeId,
   useEditor,
 } from 'tldraw';
+import { refreshResource } from '@/resources/resourceRefresh';
+import { getBoardResourceActionCapabilities } from '@/resources/resourceActions';
 import { emitResourceActivated } from '@/resources/resourceBus';
 import { resourcePreviewUrl, useResourceDocument } from '@/resources/useResourceDocument';
-import { findBoardResourceRenderer } from './plugins/resourceRuntime';
+import { findBoardResourceRenderer, getBoardResourceActions } from './plugins/resourceRuntime';
+import type { BoardResourceDocument } from './plugins/resourceTypes';
 import { BoardPluginErrorBoundary } from './plugins/BoardPluginErrorBoundary';
 import { consumePendingResourceFocus } from './resourceFocus';
 import { defaultResourceShapeSize, shouldExpandLegacyResourceShape } from './resourceLayout';
+import { useResourceActivationPolicy } from './resourceActivationStore';
 import { attachResourceInteractionBoundary } from './resourceInteractionBoundary';
 import { useBoardNodeEvents } from './events/useBoardNodeEvents';
 import type { TerminalResourceRef } from '@bohemian/terminal-protocol';
@@ -220,6 +225,7 @@ function ResourceShapeBody({ shape }: { shape: ResourceShape }) {
     onChromePointerDown,
   } = useBoardNodeEvents(shape.id, { editable: true });
   const contentRef = useRef<HTMLDivElement>(null);
+  const resourcePolicy = useResourceActivationPolicy(editor);
   const resource = useMemo(() => resourceFromShape(shape), [
     props.resourceKind,
     props.path,
@@ -237,11 +243,25 @@ function ResourceShapeBody({ shape }: { shape: ResourceShape }) {
     props.terminalId,
     props.agentKind,
   ]);
-  const state = useResourceDocument(resource);
+  const isResourceDeferred = (
+    !resourcePolicy.initialized && resourcePolicy.smartEnabled
+  ) || resourcePolicy.deferredIds.has(shape.id);
+  const state = useResourceDocument(resource, isResourceDeferred);
   const document = state.status === 'ready' ? state.document : undefined;
   const renderer = document ? findBoardResourceRenderer(document) : null;
   const Renderer = renderer?.Component;
   const previewUrl = resourcePreviewUrl(document?.resource ?? resource);
+  const actionDocument: BoardResourceDocument = document ?? {
+    resource,
+    previewKind: props.previewKind,
+    name: props.displayName,
+  };
+  const resourceActions = useMemo(
+    () => getBoardResourceActions(resource, actionDocument),
+    [actionDocument, resource],
+  );
+  const openAction = resourceActions.find((action) => action.id === 'open-local' || action.id === 'open-external');
+  const actionCapabilities = useMemo(() => getBoardResourceActionCapabilities(), []);
   const previewKind = document?.previewKind ?? props.previewKind;
 
   useEffect(() => {
@@ -271,6 +291,34 @@ function ResourceShapeBody({ shape }: { shape: ResourceShape }) {
             </span>
           )}
           <span className="text-[10px] uppercase text-zinc-500">{previewKind}</span>
+          <button
+            type="button"
+            title="Refresh resource preview"
+            aria-label="Refresh resource preview"
+            className="grid h-6 w-6 shrink-0 place-items-center text-zinc-500 hover:bg-zinc-800 hover:text-white"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              refreshResource(resource);
+            }}
+          >
+            <RefreshCw size={12} />
+          </button>
+          {openAction && (
+            <button
+              type="button"
+              title={openAction.labelKey}
+              aria-label={openAction.labelKey}
+              className="grid h-6 w-6 shrink-0 place-items-center text-zinc-500 hover:bg-zinc-800 hover:text-white"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                void openAction.run(resource, actionDocument, actionCapabilities);
+              }}
+            >
+              <ExternalLink size={12} />
+            </button>
+          )}
         </div>
         <div
           ref={contentRef}
@@ -283,6 +331,12 @@ function ResourceShapeBody({ shape }: { shape: ResourceShape }) {
           )}
           {state.status === 'error' && (
             <div className="flex h-full items-center justify-center p-3 text-center text-[11px] text-red-300">{state.error}</div>
+          )}
+          {state.status === 'deferred' && (
+            <div className="flex h-full flex-col items-center justify-center gap-2 p-3 text-center text-[11px] text-zinc-500">
+              <div className="text-zinc-300">Smart resource loading</div>
+              <div>This preview activates when the node enters the readable viewport.</div>
+            </div>
           )}
           {document && Renderer && (
             <BoardPluginErrorBoundary pluginId={`resource-renderer:${renderer?.id ?? 'unknown'}`}>

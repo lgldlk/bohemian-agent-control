@@ -75,6 +75,7 @@ import { BoardPluginRuntimeProvider } from './plugins/runtimeScope';
 import { BoardPluginRuntimeCore } from './plugins/runtimeCore';
 import { PluginContentShapeUtil } from './plugins/PluginContentShape';
 import AgentQuickNavigator from './AgentQuickNavigator';
+import { ResourceActivationRuntime } from './ResourceActivationRuntime';
 import { isBusinessGroupFrame } from './boardShapes';
 import { FRAME_DEFAULT_H, FRAME_DEFAULT_W } from './groupFrame';
 
@@ -154,6 +155,7 @@ function CanvasOverlays({
       <BoardPluginPanel tasks={tasks} />
       <BoardPluginOverlayHost tasks={tasks} />
       <BoardPluginRuntime tasks={tasks} runtime={pluginRuntime} />
+      <ResourceActivationRuntime />
       <BoardTerminalRuntime client={client} />
       <BoardSearch query={search ?? ''} />
       <GroupActionBar />

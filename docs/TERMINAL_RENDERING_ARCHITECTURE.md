@@ -13,12 +13,21 @@ A terminal render has four independent states:
 
 No one state may be inferred from another. In particular:
 
-- `alternateScreen` describes the PTY program. The board scrollbar is xterm's normal-buffer history, so presentation drops alternate-screen switches and CSI 3 J before xterm parses them.
+- `alternateScreen` describes the PTY program. xterm renders that program on the alternate buffer, as Orca does. The board scrollbar is the normal buffer and returns when the program leaves the alternate screen.
 - A pinned viewport must not be forced to the bottom because output arrived.
 - A resize or replay must not replace a user's scroll intent with a numeric line captured before reflow.
 - A scrollbar is an emulator/buffer result, not a CSS decoration.
 
-## Output Pipeline
+## Presentation Policy
+
+Canvas terminals use three presentation states derived from tldraw visibility, camera zoom, physical size, document visibility, parking, and focus:
+
+- `hot`: the focused visible terminal. It receives the highest scheduler priority and may hold a WebGL lease.
+- `warm`: a visible background terminal. It keeps the emulator available but is lower priority than hot output.
+- `cold`: a culled, hidden, parked, or too-small terminal. Its output subscription is paused through the existing server pause/resume contract and it hydrates from a snapshot when it returns.
+
+The policy is implemented in `terminalPresentation.ts`. It must not change PTY or Agent identity. tldraw may keep a culled HTML shape mounted with `display: none`; the presentation policy still has to suspend its terminal output work. WebGL is leased globally and is limited to a small number of hot terminals. Terminals without a lease use xterm's DOM renderer.
+
 
 Live output follows one pipeline:
 
@@ -33,7 +42,8 @@ PTY frame
 
 The queue owns ordering and backpressure. The renderer owns parsing and paint. ACKs are released after xterm has accepted and parsed the bytes, not when the WebSocket frame merely arrives. Dropped or discarded chunks must release their ACK credits too.
 
-Visible output is high priority, but draining remains cooperative. A drain has a byte/chunk/time budget and yields to input and paint. Background terminals use a slower cadence. No component writes directly to xterm outside this pipeline.
+The output queue, cooperative drain, parser-completion ACKs, and backlog accounting are owned by `TerminalRenderController`. `Terminal.tsx` supplies the xterm write callback and scroll-intent hooks; it does not own a second output queue.
+
 
 ## Scroll Intent
 
@@ -69,7 +79,9 @@ normal prologue
   -> pending escape tail
 ```
 
-Presentation removes `ESC[?1049h`, `ESC[?1049l`, `ESC[?1047h`, `ESC[?1047l`, `ESC[?47h`, `ESC[?47l`, and `ESC[3J` before xterm parses them. Those controls either hide the normal buffer or erase its history, which removes the scrollbar. The PTY process still receives the original controls. Drawing bytes, including cursor addressing, are left intact.
+Live bytes, including `ESC[?1049h`, `ESC[?1049l`, and cursor addressing, reach xterm unchanged. tmux keeps `alternate-screen` on and does not clear `smcup`/`rmcup`. Emulating that paint on the normal buffer scrolls a cursor-addressed row that ends in CR LF into history, which leaves a blank gap or stale cells. The glitch is intermittent because only some TUI frames repaint that way.
+
+Nested tmux must not receive xterm.js identity replies as keyboard input. On attach tmux sends the complete identity probe set: DA1 (`CSI c`), DA2 (`CSI > c`), and XTVERSION (`CSI > q`). `terminalQueryPolicy.ts` handles that whole class before xterm's built-in reply handlers, so no CSI/DCS identity response is emitted through `onData`. Kitty keyboard negotiation (`CSI > u`, `CSI ? u`) and ordinary input remain untouched. `terminalOutputSanitizer.ts` only removes identity artifacts from snapshots recorded before this policy existed; it is not the live protocol boundary.
 
 If an alternate-screen frame cannot fit the current width, discard only that fixed-grid frame and let the live TUI repaint after a resize. Keep the normal history and mode choreography.
 
@@ -94,28 +106,40 @@ Wheel handling has two paths:
 
 - when the normal buffer has history, the wheel and scrollbar scroll that buffer;
 - normal terminal scrolling is left to xterm's viewport;
-- TUI mouse tracking may transform wheel distance into replayed line-mode mouse reports, with a replay marker to prevent recursion.
+- alternate-screen wheel input is replayed into xterm's mouse protocol when
+  the TUI has mouse tracking; PageUp/PageDown is the fallback when it does not.
 
 Wheel policy must not be coupled to Agent identity, launch state, hydration, or scrollback persistence.
 
 Selection uses xterm's own cell coordinate system. CSS transforms and fit changes require coordinate correction, but selection must not write directly to private selection internals as a replacement for xterm's selection service.
 
+`terminalEventBoundary.ts` owns input routing for an embedded terminal. Keyboard, IME, clipboard, pointer, mouse, wheel, touch, selection, and drag/drop events run through xterm and the terminal adapters first, then stop at the terminal boundary before they reach tldraw or page-level shortcuts. The boundary never calls `preventDefault`; only the terminal feature that consumes an event may cancel its browser behavior.
+
+tldraw handles Escape during the capture phase to exit shape editing before xterm's textarea receives it. While a terminal is focused, `terminalKeyInput.ts` forwards plain Escape directly as byte `0x1B` and stops the canvas event.
+
+macOS Cmd/Super modifiers cannot be preserved through tmux: tmux rewrites `CSI 1;9 C/D` as Alt-modified arrows. `terminalKeyInput.ts` therefore maps Cmd+Left/Right to Home/End and Cmd+Up/Down to Ctrl+Home/End, preserving the editing meaning through sequences tmux transports unchanged. Shift variants map to the corresponding selecting navigation sequences.
+
 ## Current Gaps
 
 The current implementation still needs these boundaries:
 
-- `Terminal.tsx` still owns the queue instead of a reusable output scheduler with explicit parse-credit lifecycle.
+- Warm terminals currently share the scheduler's frame budget and need an explicit lower-frequency cadence and fairness metrics.
 - The server now tracks buffer mode and splits normal history from the current alternate frame in snapshots, but it does not yet serialize a full headless styled buffer like Orca's authoritative model.
-- Fit restores a numeric viewport line only as a fallback; it lacks Orca's logical markers and bounded reflow retries.
-- Live writes and snapshot replay both pass through `terminalScreenPolicy.ts`, so alternate-screen switches and CSI 3 J never reach xterm. The old rendered-text cache stays off this path.
+- Hydration now drains output both before and after snapshot parsing, and rendered normal-buffer history is cached across remounts.
+- Fit restores a logical line marker when available, with bounded reflow retries; numeric bottom-offset restoration remains the fallback.
+- `terminalScreenPolicy.ts` is not on the live write or snapshot path. Wiring it back would drop alternate-screen switches and recreate the garbled normal-buffer paint.
+- WebGL leasing is bounded, but renderer mode changes and context-loss recovery still need browser-level performance coverage.
+- Development builds expose a terminal performance preview with FPS, frame time, long-frame count, queue bytes, parser time, dropped frames, presentation state, and WebGL/DOM mode. Production builds keep it disabled by default and expose the same toggle through terminal settings.
 
 ## Implementation Order
 
-1. Add a terminal render controller that owns queue, budget, parse completion, ACKs, and output ordering.
-2. Add scroll-intent capture/restore around live writes, fit, hydration, and replay.
-3. Extend the server snapshot contract with `alternateScreen`, normal history ANSI, and alternate frame ANSI.
-4. Replace alternate-screen filtering with explicit replay choreography.
-5. Make resize/replay use authoritative dimensions and post-fit restoration.
-6. Move wheel and selection behavior behind independent adapters after the emulator path is stable.
+1. ~~Add a terminal render controller that owns queue, budget, parse completion, ACKs, and output ordering.~~
+2. ~~Add presentation states for hot, warm, and cold canvas terminals, including bounded WebGL leases.~~
+3. Add explicit warm-terminal cadence, fairness scheduling, and runtime render metrics.
+4. ~~Add scroll-intent capture/restore around live writes, fit, hydration, and replay.~~
+5. Extend the server snapshot contract with `alternateScreen`, normal history ANSI, and alternate frame ANSI.
+6. Replace alternate-screen filtering with explicit replay choreography.
+7. Make resize/replay use authoritative dimensions and post-fit restoration.
+8. Move wheel and selection behavior behind independent adapters after the emulator path is stable.
 
 Until these slices land, terminal scrolling/rendering changes must not be made as isolated CSS or event-handler patches.

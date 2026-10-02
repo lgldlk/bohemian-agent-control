@@ -654,6 +654,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     return () => {
       cancelled = true;
       hydrationRef.current += 1;
+      // StrictMode can tear down and recreate the xterm effect immediately.
+      // Do not let the new mount reuse a promise whose generation was just
+      // invalidated; that promise will intentionally no-op after cleanup.
+      hydrationPromiseRef.current = null;
+      hydratingRef.current = false;
+      pendingOutputRef.current = [];
+      pendingOutputCharsRef.current = 0;
       observer.disconnect();
       visibilityObserver.disconnect();
       evaluatePresentationRef.current = null;

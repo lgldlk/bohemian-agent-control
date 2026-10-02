@@ -7,10 +7,19 @@ import {
   FRAME_PAD,
   FRAME_TITLE,
   frameCanAbsorb,
+  frameHeadingPageHeight,
   planFrameExpansion,
 } from './groupFrame';
 
 const frame = { x: 100, y: 80, w: 480, h: 280 };
+
+describe('frame heading clearance', () => {
+  it('keeps the heading at a fixed screen height across zoom levels', () => {
+    expect(frameHeadingPageHeight(1)).toBe(40);
+    expect(frameHeadingPageHeight(0.5)).toBe(80);
+    expect(frameHeadingPageHeight(2)).toBe(20);
+  });
+});
 
 describe('default group frame', () => {
   it('fits two cards with room to place another before the edge', () => {

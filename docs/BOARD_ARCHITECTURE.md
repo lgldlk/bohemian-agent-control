@@ -101,13 +101,28 @@ interface EvidenceBoardProps {
 
 **位置**：`src/board/boardSync.ts`
 
-**职责**：
-- 提供操作白板的底层 API
+**职责**：把空间归属同步成白板上的卡片和分组框。不决定画板落位，也不决定分组框如何长大。
+
 - `syncSpaceToBoard`: 同步空间任务到白板
 - `refreshTaskCardProps`: 刷新卡片属性
 - `bootstrapNamedFrames`: 创建分组框架
 - `pruneOrphanShapes`: 清理孤立的卡片
-- `readGroupsFromBoard`: 从白板读取分组信息
+- `readGroupsFromBoard`: 只从业务分组 frame 读取分组信息
+
+#### 业务分组与原生 frame 的边界
+
+- **业务分组 frame**：必须带有 `meta.groupId`，参与 `spaceStore`、组内 Agent 归属、业务整理、自动扩框和编组/解组。
+- **原生 tldraw frame**：没有 `meta.groupId`，属于自由画板内容，不得写入 `spaceStore`，也不得触发业务分组创建、业务整理或自动扩框。
+- 原生 frame 内的 Agent 在空间归属上视为未分组，但“整理整个画板”不会把它强行拖出原生 frame。
+- 历史上由原生 frame 误生成的 `shape:*` 空间分组会在加载时清理；其中的 Agent 回收到“未分组”。
+
+### 4. 画板落位与分组框
+
+按文件单一职责拆开，调用方自己组合：
+
+- `boardPlacement.ts`：画板上新形状的页面落位。纯规则。
+- `groupFrame.ts`：分组框的内边距、单步上限，以及能不能收进新内容。纯规则。
+- `groupFrameEditor.ts`：把分组框规则应用到 tldraw，不改落位算法。
 
 ## 添加新功能的最佳实践
 
@@ -147,12 +162,11 @@ const onNewInteraction = (e: MouseEvent) => {
 
 ### 3. 添加新的白板操作 API
 
-**应该做**：在 `boardSync.ts` 中添加新函数
+**应该做**：按变化原因放进对应文件。空间与白板的同步放 `boardSync.ts`；画板落位放 `boardPlacement.ts`；分组框几何放 `groupFrame.ts`，应用到 editor 放 `groupFrameEditor.ts`。
 
 ```typescript
-// 在 boardSync.ts 中
+// 在职责对应的文件中
 export function newBoardOperation(editor: Editor, params: SomeParams) {
-  // 直接操作 editor
   editor.updateShapes([...]);
 }
 ```

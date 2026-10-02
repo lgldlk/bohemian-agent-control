@@ -1,5 +1,11 @@
 import { BOARD_PLACE_GAP } from './boardPlacement';
-import { FRAME_DEFAULT_H, FRAME_DEFAULT_W, FRAME_PAD, FRAME_TITLE } from './groupFrame';
+import {
+  FRAME_DEFAULT_H,
+  FRAME_DEFAULT_W,
+  FRAME_HEADING_SCREEN_HEIGHT,
+  FRAME_PAD,
+  FRAME_TITLE,
+} from './groupFrame';
 
 /** 列与列、行与行、组与组之间的间距。与画板落位相同。 */
 export const ARRANGE_GAP = BOARD_PLACE_GAP;
@@ -196,8 +202,11 @@ export function arrangeBoard(input: {
   groups: ArrangeGroupInput[];
   ungrouped: ArrangeCluster[];
   perRow?: number;
+  /** frame 外部标题在页面坐标中的高度。默认按 100% 缩放计算。 */
+  titleClearance?: number;
 }): ArrangeBoardPlan {
   const perRow = input.perRow ?? DEFAULT_AGENTS_PER_ROW;
+  const titleClearance = input.titleClearance ?? FRAME_HEADING_SCREEN_HEIGHT;
   const points = [
     ...input.groups.map((group) => ({ x: group.x, y: group.y })),
     ...input.ungrouped.map((cluster) => ({ x: cluster.card.x, y: cluster.card.y })),
@@ -211,10 +220,12 @@ export function arrangeBoard(input: {
   const frames: ArrangeFramePlacement[] = [];
   const shapes: ArrangeShapePlacement[] = [];
   let cursorY = originY;
-  for (const group of groups) {
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    const group = groups[groupIndex];
+    const hasNextGroup = groupIndex < groups.length - 1;
     if (group.clusters.length === 0) {
       frames.push({ id: group.id, x: originX, y: cursorY, w: FRAME_DEFAULT_W, h: FRAME_DEFAULT_H });
-      cursorY += FRAME_DEFAULT_H + ARRANGE_GAP;
+      cursorY += FRAME_DEFAULT_H + ARRANGE_GAP + (hasNextGroup ? titleClearance : 0);
       continue;
     }
     const inside = arrangeInsideFrame(group.clusters, perRow);
@@ -223,7 +234,7 @@ export function arrangeBoard(input: {
     for (const placement of inside.placements) {
       shapes.push({ ...placement, parentId: group.id });
     }
-    cursorY += inside.h + ARRANGE_GAP;
+    cursorY += inside.h + ARRANGE_GAP + (hasNextGroup ? titleClearance : 0);
   }
 
   if (input.ungrouped.length > 0) {
